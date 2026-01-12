@@ -1,0 +1,212 @@
+<?php
+
+namespace app\admin\controller\content;
+
+use Throwable;
+use app\common\controller\Backend;
+use app\admin\model\Banner as BannerModel;
+
+class Banner extends Backend
+{
+    /**
+     * @var object
+     * @phpstan-var BannerModel
+     */
+    protected object $model;
+
+    protected string|array $quickSearchField = ['title', 'id'];
+
+    protected array $noNeedPermission = ['getBannerList', 'index', 'edit', 'del'];
+
+    public function initialize(): void
+    {
+        parent::initialize();
+        $this->model = new BannerModel();
+    }
+
+    /**
+     * 查看
+     * @throws Throwable
+     */
+    public function index(): void
+    {
+        if ($this->request->param('select')) {
+            $this->select();
+        }
+
+        list($where, $alias, $limit, $order) = $this->queryBuilder('sort desc,id desc');
+        $res = $this->model
+            ->alias($alias)
+            ->where($where)
+            ->order($order)
+            ->paginate($limit);
+
+        $this->success('', [
+            'list'   => $res->items(),
+            'total'  => $res->total(),
+            'remark' => get_route_remark(),
+        ]);
+    }
+
+    /**
+     * 添加
+     * @throws Throwable
+     */
+    public function add(): void
+    {
+        if ($this->request->isPost()) {
+            $data = $this->request->post();
+            if (!$data) {
+                $this->error(__('Parameter %s can not be empty', ['']));
+            }
+
+            $data = $this->excludeFields($data);
+
+            // 添加时也过滤掉时间字段，确保由模型自动处理
+            unset($data['create_time'], $data['update_time']);
+
+            $result = false;
+            $this->model->startTrans();
+            try {
+                // 模型验证
+                if ($this->modelValidate) {
+                    $validate = str_replace("\\model\\", "\\validate\\", get_class($this->model));
+                    if (class_exists($validate)) {
+                        $validate = new $validate();
+                        if ($this->modelSceneValidate) $validate->scene('add');
+                        $validate->check($data);
+                    }
+                }
+                $result = $this->model->save($data);
+                $this->model->commit();
+            } catch (Throwable $e) {
+                $this->model->rollback();
+                $this->error($e->getMessage());
+            }
+            if ($result !== false) {
+                $this->success(__('Added successfully'));
+            } else {
+                $this->error(__('No rows were added'));
+            }
+        }
+
+        $this->success('', [
+            'remark' => get_route_remark(),
+        ]);
+    }
+
+    /**
+     * 编辑
+     * @throws Throwable
+     */
+    public function edit(): void
+    {
+        $pk  = $this->model->getPk();
+        $id  = $this->request->param($pk);
+        $row = $this->model->find($id);
+        if (!$row) {
+            $this->error(__('Record not found'));
+        }
+
+        if ($this->request->isPost()) {
+            $data = $this->request->post();
+            if (!$data) {
+                $this->error(__('Parameter %s can not be empty', ['']));
+            }
+
+            $data = $this->excludeFields($data);
+
+            // 编辑时过滤掉时间字段，避免格式化字符串被当作时间戳处理
+            unset($data['create_time'], $data['update_time']);
+
+            $result = false;
+            $this->model->startTrans();
+            try {
+                // 模型验证
+                if ($this->modelValidate) {
+                    $validate = str_replace("\\model\\", "\\validate\\", get_class($this->model));
+                    if (class_exists($validate)) {
+                        $validate = new $validate();
+                        if ($this->modelSceneValidate) $validate->scene('edit');
+                        $validate->check($data);
+                    }
+                }
+                $result = $row->save($data);
+                $this->model->commit();
+            } catch (Throwable $e) {
+                $this->model->rollback();
+                $this->error($e->getMessage());
+            }
+            if ($result !== false) {
+                $this->success(__('Updated successfully'));
+            } else {
+                $this->error(__('No rows were updated'));
+            }
+        }
+
+        $this->success('', [
+            'row'     => $row,
+            'remark'  => get_route_remark(),
+        ]);
+    }
+
+    /**
+     * 删除
+     * @throws Throwable
+     */
+    public function del(): void
+    {
+        $where             = [];
+        $dataLimitAdminIds = $this->getDataLimitAdminIds();
+        if ($dataLimitAdminIds) {
+            $where[] = [$this->dataLimitField, 'in', $dataLimitAdminIds];
+        }
+
+        $ids     = $this->request->param('ids/a', []);
+        $where[] = [$this->model->getPk(), 'in', $ids];
+        $data    = $this->model->where($where)->select();
+
+        $count = 0;
+        $this->model->startTrans();
+        try {
+            foreach ($data as $v) {
+                $count += $v->delete();
+            }
+            $this->model->commit();
+        } catch (Throwable $e) {
+            $this->model->rollback();
+            $this->error($e->getMessage());
+        }
+        if ($count) {
+            $this->success(__('Deleted successfully'));
+        } else {
+            $this->error(__('No rows were deleted'));
+        }
+    }
+
+    /**
+     * 获取轮番图列表（前端调用）
+     */
+    public function getBannerList(): void
+    {
+        $where = [
+            ['status', '=', '1'],
+        ];
+
+        // 时间筛选
+        $now = time();
+        $where[] = ['start_time', 'in', [0, null], 'OR'];
+        $where[] = ['end_time', 'in', [0, null], 'OR'];
+        $where[] = ['start_time', '<=', $now];
+        $where[] = ['end_time', '>=', $now];
+
+        $list = $this->model
+            ->where($where)
+            ->order('sort desc, id desc')
+            ->select();
+
+        $this->success('', [
+            'list' => $list,
+        ]);
+    }
+}

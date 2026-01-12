@@ -1,0 +1,22 @@
+export default {
+    'Stats title': '签到统计',
+    'Total points': '累计签到积分',
+    'Today points': '今日签到积分',
+    'Streak days': '连续签到天数',
+    'Sign days summary': '已累计签到 {days} 天',
+    'Action title': '签到奖励',
+    'Signed today': '今日已签到',
+    'Not signed today': '今日未签到',
+    'Daily reward tip': '每日签到可领取 {score} 积分',
+    'Referrer reward tip': '邀请人每日可额外获得 {score} 积分',
+    'Sign now': '立即签到',
+    'Calendar title': '签到日历',
+    'Record title': '签到记录',
+    'Record date': '签到日期',
+    'Record reward': '获得积分',
+    'Record time': '记录时间',
+    'Success title': '签到成功',
+    'Success reward': '成功获得 {score} 积分',
+    'Success referrer': '邀请人同步获得 {score} 积分',
+}
+

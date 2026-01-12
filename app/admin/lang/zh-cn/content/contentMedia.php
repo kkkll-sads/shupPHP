@@ -1,0 +1,30 @@
+<?php
+return [
+    'Id' => 'ID',
+    'Category' => '类别',
+    'Category promo_video' => '宣传视频',
+    'Category resource' => '资料',
+    'Category hot_video' => '热门视频',
+    'Title' => '标题',
+    'Description' => '文案',
+    'Cover Image' => '封面图',
+    'Media Url' => '资源地址',
+    'Media Type' => '资源类型',
+    'Media Type image' => '图片',
+    'Media Type video' => '视频',
+    'Media Type document' => '文档',
+    'Media Type other' => '其他',
+    'Status' => '状态',
+    'Sort' => '排序',
+    'Createtime' => '创建时间',
+    'Updatetime' => '更新时间',
+    'Category is invalid' => '类别不正确',
+    'Media resource is required' => '请上传资源',
+    'Media type is invalid' => '资源类型不正确',
+    'Status value is incorrect' => '状态值不正确',
+    'Media Resource Management' => '媒体资源管理',
+    'Add Media Resource' => '新增媒体资源',
+    'Edit Media Resource' => '编辑媒体资源',
+];
+
+

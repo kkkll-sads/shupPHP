@@ -1,0 +1,28 @@
+export default {
+    Title: 'Premium Finance Portfolio',
+    Subtitle: 'Travel-themed investment products that balance yield and flexibility.',
+    'Explore products': 'Explore Products',
+    'Product list title': 'Popular Finance Products',
+    'Product list desc': 'Flexible cycles and steady returns for every investment plan.',
+    Price: 'Price',
+    Cycle: 'Cycle',
+    Days: 'days',
+    Yield: 'Yield',
+    'Sold out': 'Sold {sold}',
+    'Sold total': 'Total sold {sold}',
+    Remaining: 'Remaining {remaining}',
+    Unlimited: 'Unlimited',
+    'Buy now': 'Buy Now',
+    'Purchase dialog title': 'Confirm Order',
+    Quantity: 'Quantity',
+    'Min purchase tip': 'Minimum purchase: {min}',
+    'Max purchase tip': 'Maximum purchase: {max}',
+    'Total amount': 'Total Amount',
+    'Confirm purchase': 'Confirm Purchase',
+    'Purchase success': 'Purchase completed. The record has been generated.',
+    'Purchase failed': 'Purchase failed. Please try again later.',
+    'Login required': 'Please log in before purchasing.',
+    'Default summary': 'Premium travel-themed finance product with balanced returns.',
+}
+
+

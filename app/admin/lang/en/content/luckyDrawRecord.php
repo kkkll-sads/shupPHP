@@ -1,0 +1,28 @@
+<?php
+return [
+    'Id'                => 'ID',
+    'User id'           => 'User ID',
+    'Prize id'          => 'Prize ID',
+    'Prize name'        => 'Prize Name',
+    'Prize type'        => 'Prize Type',
+    'Prize value'       => 'Prize Value',
+    'Status'            => 'Status',
+    'Draw time'         => 'Draw Time',
+    'Send time'         => 'Send Time',
+    'Create time'       => 'Created At',
+    'Lucky draw record' => 'Lucky Draw Record',
+    'View record'       => 'View Record',
+    'Delete record'     => 'Delete Record',
+    'Send prize'        => 'Send Prize',
+    'Batch send'        => 'Batch Send',
+    'Revoke prize'      => 'Revoke Prize',
+    'Statistics'        => 'Statistics',
+    'Status pending'    => 'Pending',
+    'Status send'       => 'Sent',
+    'Status revoke'     => 'Revoked',
+    'Prize type score'  => 'Score',
+    'Prize type money'  => 'Money',
+    'Prize type coupon' => 'Coupon',
+    'Prize type item'   => 'Item',
+];
+
