@@ -945,9 +945,35 @@ class CollectionItem extends Frontend
             $row['session_title'] = $row['session_title'] ?? '';
             $row['session_start_time'] = $row['session_start_time'] ?? '';
             $row['session_end_time'] = $row['session_end_time'] ?? '';
-            $row['zone_name'] = $row['zone_name'] ?? '';
-            $row['zone_min_price'] = (float)($row['zone_min_price'] ?? 0);
-            $row['zone_max_price'] = (float)($row['zone_max_price'] ?? 0);
+            // 🔧 修复：如果冻结金额与当前分区最高价不匹配，根据冻结金额反推正确的分区
+            $freezeAmount = (float)($row['freeze_amount'] ?? 0);
+            $currentZoneMaxPrice = (float)($row['zone_max_price'] ?? 0);
+            
+            // 如果冻结金额与当前分区最高价不匹配，尝试根据冻结金额匹配正确的分区
+            if ($freezeAmount > 0 && abs($freezeAmount - $currentZoneMaxPrice) > 0.01) {
+                $correctZone = Db::name('price_zone_config')
+                    ->where('status', 1)
+                    ->where('max_price', $freezeAmount)
+                    ->find();
+                
+                if ($correctZone) {
+                    // 使用根据冻结金额匹配到的正确分区
+                    $row['zone_name'] = $correctZone['name'];
+                    $row['zone_min_price'] = (float)$correctZone['min_price'];
+                    $row['zone_max_price'] = (float)$correctZone['max_price'];
+                } else {
+                    // 如果找不到完全匹配的，使用当前关联的分区（保持原逻辑）
+                    $row['zone_name'] = $row['zone_name'] ?? '';
+                    $row['zone_min_price'] = (float)($row['zone_min_price'] ?? 0);
+                    $row['zone_max_price'] = (float)($row['zone_max_price'] ?? 0);
+                }
+            } else {
+                // 冻结金额与分区最高价匹配，使用当前关联的分区
+                $row['zone_name'] = $row['zone_name'] ?? '';
+                $row['zone_min_price'] = (float)($row['zone_min_price'] ?? 0);
+                $row['zone_max_price'] = (float)($row['zone_max_price'] ?? 0);
+            }
+            
             $row['item_title'] = $row['item_title'] ?? '';
             $row['item_image'] = $row['item_image'] ? full_url($row['item_image'], false) : '';
             $row['item_price'] = (float)($row['item_price'] ?? 0);  // 当前价格（已增值）

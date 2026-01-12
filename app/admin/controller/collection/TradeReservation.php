@@ -77,9 +77,34 @@ class TradeReservation extends Backend
             $item['session_end_time'] = $item['session']['end_time'] ?? '';
             
             // 添加分区信息
-            $item['zone_name'] = $item['zone']['name'] ?? '';
-            $item['zone_min_price'] = (float)($item['zone']['min_price'] ?? 0);
-            $item['zone_max_price'] = (float)($item['zone']['max_price'] ?? 0);
+            // 🔧 修复：如果冻结金额与当前分区最高价不匹配，根据冻结金额反推正确的分区
+            $freezeAmount = (float)($item['freeze_amount'] ?? 0);
+            $currentZoneMaxPrice = (float)($item['zone']['max_price'] ?? 0);
+            
+            // 如果冻结金额与当前分区最高价不匹配，尝试根据冻结金额匹配正确的分区
+            if ($freezeAmount > 0 && abs($freezeAmount - $currentZoneMaxPrice) > 0.01) {
+                $correctZone = \think\facade\Db::name('price_zone_config')
+                    ->where('status', 1)
+                    ->where('max_price', $freezeAmount)
+                    ->find();
+                
+                if ($correctZone) {
+                    // 使用根据冻结金额匹配到的正确分区
+                    $item['zone_name'] = $correctZone['name'];
+                    $item['zone_min_price'] = (float)$correctZone['min_price'];
+                    $item['zone_max_price'] = (float)$correctZone['max_price'];
+                } else {
+                    // 如果找不到完全匹配的，使用当前关联的分区（保持原逻辑）
+                    $item['zone_name'] = $item['zone']['name'] ?? '';
+                    $item['zone_min_price'] = (float)($item['zone']['min_price'] ?? 0);
+                    $item['zone_max_price'] = (float)($item['zone']['max_price'] ?? 0);
+                }
+            } else {
+                // 冻结金额与分区最高价匹配，使用当前关联的分区
+                $item['zone_name'] = $item['zone']['name'] ?? '';
+                $item['zone_min_price'] = (float)($item['zone']['min_price'] ?? 0);
+                $item['zone_max_price'] = (float)($item['zone']['max_price'] ?? 0);
+            }
             
             // 初始化商品信息
             $item['item_title'] = '';
