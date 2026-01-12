@@ -309,7 +309,7 @@ class UserService
 
             // 查找可用的寄售券：
             // 1. 同一场次
-            // 2. 同一区间或前后一个区间（允许跨一个区间）
+            // 2. 同一区间或前后两个区间（允许跨两个区间）
             
             // 获取所有分区并按价格排序
             $allZones = Db::name('price_zone_config')
@@ -320,16 +320,26 @@ class UserService
             $targetIndex = array_search($targetZoneId, $allZones);
             $allowedZones = [$targetZoneId];
             
-            // 允许前一个分区（逻辑上的上一区间）
+            // 允许前两个分区（逻辑上的上两个区间）
             if ($targetIndex !== false && $targetIndex > 0) {
-                $prevZoneId = $allZones[$targetIndex - 1];
-                $allowedZones[] = $prevZoneId;
+                $prevZoneId1 = $allZones[$targetIndex - 1];
+                $allowedZones[] = $prevZoneId1;
+                // 允许前第二个分区
+                if ($targetIndex > 1) {
+                    $prevZoneId2 = $allZones[$targetIndex - 2];
+                    $allowedZones[] = $prevZoneId2;
+                }
             }
             
-            // 允许后一个分区（逻辑上的下一区间）
+            // 允许后两个分区（逻辑上的下两个区间）
             if ($targetIndex !== false && $targetIndex < count($allZones) - 1) {
-                $nextZoneId = $allZones[$targetIndex + 1];
-                $allowedZones[] = $nextZoneId;
+                $nextZoneId1 = $allZones[$targetIndex + 1];
+                $allowedZones[] = $nextZoneId1;
+                // 允许后第二个分区
+                if ($targetIndex < count($allZones) - 2) {
+                    $nextZoneId2 = $allZones[$targetIndex + 2];
+                    $allowedZones[] = $nextZoneId2;
+                }
             }
             
             // 兼容旧逻辑：如果 ID-1 不是逻辑上一区间，且 ID-1 > 0，也允许（防止某些特殊情况）

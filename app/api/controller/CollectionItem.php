@@ -1944,21 +1944,32 @@ class CollectionItem extends Frontend
                 
                 // 3. ✅ 检查并扣除寄售券（关键修复）
                 $itemSessionId = (int)($item['session_id'] ?? 0);
-                $itemZoneId = (int)($item['zone_id'] ?? 0);
                 
-                // 尝试补全 zone_id
-                if ($itemZoneId <= 0 && !empty($itemPriceZone)) {
-                     $zoneMatch = Db::name('price_zone_config')->where('name', $itemPriceZone)->find();
-                     if ($zoneMatch) {
-                         $itemZoneId = (int)$zoneMatch['id'];
-                     }
+                // 🔧 修复：根据寄售价格获取正确的 zone_id，而不是使用藏品的 zone_id
+                // 因为藏品的 zone_id 可能为 0（通用包），导致无法找到可用券
+                $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
+                $targetZoneId = (int)($zone['id'] ?? 0);
+                
+                // 如果根据价格获取的 zone_id 无效，尝试使用藏品的 zone_id 或 price_zone
+                if ($targetZoneId <= 0) {
+                    $itemZoneId = (int)($item['zone_id'] ?? 0);
+                    
+                    // 尝试补全 zone_id
+                    if ($itemZoneId <= 0 && !empty($itemPriceZone)) {
+                         $zoneMatch = Db::name('price_zone_config')->where('name', $itemPriceZone)->find();
+                         if ($zoneMatch) {
+                             $targetZoneId = (int)$zoneMatch['id'];
+                         }
+                    } else {
+                        $targetZoneId = $itemZoneId;
+                    }
                 }
 
-                $validCoupon = UserService::getAvailableCouponForConsignment($userId, $itemSessionId, $itemZoneId);
+                $validCoupon = UserService::getAvailableCouponForConsignment($userId, $itemSessionId, $targetZoneId);
 
                 if (!$validCoupon) {
-                     $zoneText = $itemPriceZone ? "({$itemPriceZone})" : "";
-                     throw new \Exception("没有适用于该场次(#{$itemSessionId})和价格区间{$zoneText}的寄售券");
+                     $zoneName = $zone['name'] ?? ($itemPriceZone ?: "区间#{$targetZoneId}");
+                     throw new \Exception("没有适用于该场次(#{$itemSessionId})和价格区间({$zoneName})的寄售券");
                 }
                 
                 $usedCouponId = $validCoupon['id'];
@@ -2116,8 +2127,11 @@ class CollectionItem extends Frontend
 
             // ========== 生成寄售记录并更新状态 ==========
             // 6. 根据藏品的 package_id 和寄售价格分区匹配资产包
-            $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
-            $zoneId = $zone['id'] ?? 0;
+            // 🔧 修复：如果前面已经获取过 zone，直接使用，避免重复查询
+            if (!isset($zone) || empty($zone)) {
+                $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
+            }
+            $zoneId = (int)($zone['id'] ?? 0);
             
             // 检查是否为旧资产包
             $isOldAssetPackage = (int)($collection['is_old_asset_package'] ?? 0);

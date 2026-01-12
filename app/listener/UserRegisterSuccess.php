@@ -244,61 +244,106 @@ class UserRegisterSuccess
             $inviteRewardMin = (float)$activity->invite_reward_min;
             $inviteRewardMax = (float)$activity->invite_reward_max;
             
-            if ($inviteRewardMin <= 0 || $inviteRewardMax <= 0) {
-                return; // 奖励金额为0，不发放
+            // 🔧 获取邀请奖励算力配置
+            $inviteRewardPower = (float)get_sys_config('invite_reward_power', 0);
+            
+            // 如果金额和算力都为0，不发放
+            if (($inviteRewardMin <= 0 || $inviteRewardMax <= 0) && $inviteRewardPower <= 0) {
+                return; // 奖励为0，不发放
             }
 
             // 生成随机金额
-            $inviteReward = $this->generateRandomMoney($inviteRewardMin, $inviteRewardMax);
+            $inviteReward = 0;
+            if ($inviteRewardMin > 0 && $inviteRewardMax > 0) {
+                $inviteReward = $this->generateRandomMoney($inviteRewardMin, $inviteRewardMax);
+            }
 
             // 在事务中发放奖励
-            Db::transaction(function () use ($inviterId, $newUserId, $inviteReward, $activity) {
+            Db::transaction(function () use ($inviterId, $newUserId, $inviteReward, $inviteRewardPower, $activity) {
                 // 获取邀请人信息
                 $inviter = \app\common\model\User::where('id', $inviterId)->lock(true)->find();
                 if (!$inviter) {
                     return;
                 }
 
-                $beforeWithdrawable = (float)$inviter->withdrawable_money;
-                $afterWithdrawable = round($beforeWithdrawable + $inviteReward, 2);
-                $inviter->withdrawable_money = $afterWithdrawable;
-                $inviter->save();
-
-                // 记录资金变动日志
                 $now = time();
                 $flowNo = generateSJSFlowNo($inviterId);
                 $batchNo = generateBatchNo('INVITE_REWARD', $newUserId);
-                Db::name('user_money_log')->insert([
-                    'user_id' => $inviterId,
-                    'field_type' => 'withdrawable_money',
-                    'money' => $inviteReward,
-                    'before' => $beforeWithdrawable,
-                    'after' => $afterWithdrawable,
-                    'memo' => sprintf('邀请好友获得金额：%.2f元（被邀请用户ID：%d）', $inviteReward, $newUserId),
-                    'flow_no' => $flowNo,
-                    'batch_no' => $batchNo,
-                    'biz_type' => 'invite_reward',
-                    'biz_id' => $newUserId,
-                    'create_time' => $now,
-                ]);
+                $changes = [];
 
-                UserActivityLog::create([
-                    'user_id' => $inviterId,
-                    'related_user_id' => $newUserId,
-                    'action_type' => 'invite_reward',
-                    'change_field' => 'withdrawable_money',
-                    'change_value' => $inviteReward,
-                    'before_value' => $beforeWithdrawable,
-                    'after_value' => $afterWithdrawable,
-                    'remark' => sprintf('邀请好友获得金额：%.2f元（被邀请用户ID：%d）', $inviteReward, $newUserId),
-                    'extra' => [
-                        'activity_id' => $activity->id,
-                        'activity_name' => $activity->name,
-                        'fund_source' => $activity->fund_source,
-                        'invite_reward' => $inviteReward,
-                        'invited_user_id' => $newUserId,
-                    ],
-                ]);
+                // 发放金额奖励
+                if ($inviteReward > 0) {
+                    $beforeWithdrawable = (float)$inviter->withdrawable_money;
+                    $afterWithdrawable = round($beforeWithdrawable + $inviteReward, 2);
+                    $inviter->withdrawable_money = $afterWithdrawable;
+                    $changes[] = ['field' => 'withdrawable_money', 'value' => $inviteReward, 'before' => $beforeWithdrawable, 'after' => $afterWithdrawable];
+
+                    // 记录资金变动日志
+                    Db::name('user_money_log')->insert([
+                        'user_id' => $inviterId,
+                        'field_type' => 'withdrawable_money',
+                        'money' => $inviteReward,
+                        'before' => $beforeWithdrawable,
+                        'after' => $afterWithdrawable,
+                        'memo' => sprintf('邀请好友获得金额：%.2f元（被邀请用户ID：%d）', $inviteReward, $newUserId),
+                        'flow_no' => $flowNo,
+                        'batch_no' => $batchNo,
+                        'biz_type' => 'invite_reward',
+                        'biz_id' => $newUserId,
+                        'create_time' => $now,
+                    ]);
+                }
+
+                // 🔧 发放算力奖励
+                if ($inviteRewardPower > 0) {
+                    $beforeGreenPower = (float)($inviter->green_power ?? 0);
+                    $afterGreenPower = round($beforeGreenPower + $inviteRewardPower, 2);
+                    $inviter->green_power = $afterGreenPower;
+                    $changes[] = ['field' => 'green_power', 'value' => $inviteRewardPower, 'before' => $beforeGreenPower, 'after' => $afterGreenPower];
+
+                    // 记录算力变动日志
+                    $flowNo2 = generateSJSFlowNo($inviterId);
+                    Db::name('user_money_log')->insert([
+                        'user_id' => $inviterId,
+                        'field_type' => 'green_power',
+                        'money' => $inviteRewardPower,
+                        'before' => $beforeGreenPower,
+                        'after' => $afterGreenPower,
+                        'memo' => sprintf('邀请好友获得算力：%.2f（被邀请用户ID：%d）', $inviteRewardPower, $newUserId),
+                        'flow_no' => $flowNo2,
+                        'batch_no' => $batchNo,
+                        'biz_type' => 'invite_reward',
+                        'biz_id' => $newUserId,
+                        'create_time' => $now,
+                    ]);
+                }
+
+                // 保存用户信息
+                $inviter->save();
+
+                // 记录活动日志（每个变更字段一条日志）
+                foreach ($changes as $change) {
+                    UserActivityLog::create([
+                        'user_id' => $inviterId,
+                        'related_user_id' => $newUserId,
+                        'action_type' => 'invite_reward',
+                        'change_field' => $change['field'],
+                        'change_value' => (string)$change['value'],
+                        'before_value' => (string)$change['before'],
+                        'after_value' => (string)$change['after'],
+                        'remark' => $change['field'] === 'withdrawable_money' 
+                            ? sprintf('邀请好友获得金额：%.2f元（被邀请用户ID：%d）', $change['value'], $newUserId)
+                            : sprintf('邀请好友获得算力：%.2f（被邀请用户ID：%d）', $change['value'], $newUserId),
+                        'extra' => [
+                            'activity_id' => $activity->id,
+                            'activity_name' => $activity->name,
+                            'fund_source' => $activity->fund_source,
+                            'invite_reward' => $inviteReward,
+                            'invite_reward_power' => $inviteRewardPower,
+                            'invited_user_id' => $newUserId,
+                        ],
+                    ]);
+                }
             });
         } catch (Throwable $e) {
             Log::error('Invite reward error: ' . $e->getMessage());
