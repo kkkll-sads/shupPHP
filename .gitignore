@@ -30,3 +30,6 @@ Thumbs.db
 # 备份文件
 *.bak
 *.backup
+
+# 用户上传的文件
+public/storage/
