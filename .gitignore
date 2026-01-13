@@ -33,3 +33,9 @@ Thumbs.db
 
 # 用户上传的文件
 public/storage/
+
+# 编译后的静态资源文件
+public/assets/
+
+# 前端构建输出目录
+web/dist/

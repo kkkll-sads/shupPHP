@@ -1,1 +1,0 @@
-const e={code:"邀请码",creator:"创建者(手机号)",upuser:"上级用户(手机号)",child_count:"下级用户数",status:"状态",use_count:"已使用次数",max_use:"最大使用次数",expire_time:"过期时间",remark:"备注",auto_generate_tip:"留空则自动生成",max_use_tip:"0表示不限制使用次数",expire_time_tip:"留空则永不过期","Invite code management":"邀请码管理","Add invite code":"添加邀请码","Edit invite code":"编辑邀请码","Delete invite code":"删除邀请码"};export{e as default};
