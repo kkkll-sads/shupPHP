@@ -1,0 +1,28 @@
+<?php
+return [
+    'Id'                => 'ID',
+    'User id'           => '用户ID',
+    'Prize id'          => '奖品ID',
+    'Prize name'        => '奖品名称',
+    'Prize type'        => '奖品类型',
+    'Prize value'       => '奖品数值',
+    'Status'            => '状态',
+    'Draw time'         => '抽奖时间',
+    'Send time'         => '发放时间',
+    'Create time'       => '创建时间',
+    'Lucky draw record' => '幸运转盘抽奖记录',
+    'View record'       => '查看记录',
+    'Delete record'     => '删除记录',
+    'Send prize'        => '发放奖品',
+    'Batch send'        => '批量发放',
+    'Revoke prize'      => '撤销奖品',
+    'Statistics'        => '统计信息',
+    'Status pending'    => '待发放',
+    'Status send'       => '已发放',
+    'Status revoke'     => '已撤销',
+    'Prize type score'  => '积分',
+    'Prize type money'  => '金额',
+    'Prize type coupon' => '优惠券',
+    'Prize type item'   => '实物',
+];
+

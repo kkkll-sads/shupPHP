@@ -1,0 +1,27 @@
+export default {
+    Id: 'ID',
+    Category: 'Category',
+    'Category promo_video': 'Promo Video',
+    'Category resource': 'Resource',
+    'Category hot_video': 'Hot Video',
+    Title: 'Title',
+    Description: 'Description',
+    'Cover Image': 'Cover Image',
+    'Media Url': 'Media Url',
+    'Media Type': 'Media Type',
+    'Media Type image': 'Image',
+    'Media Type video': 'Video',
+    'Media Type document': 'Document',
+    'Media Type other': 'Other',
+    Status: 'Status',
+    Sort: 'Sort',
+    Createtime: 'Create Time',
+    Updatetime: 'Update Time',
+    'Category is invalid': 'Category is invalid',
+    'Media resource is required': 'Media resource is required',
+    'Media type is invalid': 'Media type is invalid',
+    'Status value is incorrect': 'Status value is incorrect',
+    'View link': 'View',
+}
+
+

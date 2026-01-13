@@ -1,0 +1,12 @@
+{
+  "scripts": {
+    "build:frontend": "cd web && pnpm run build",
+    "deploy:frontend": "./deploy-frontend.sh",
+    "build:deploy": "npm run build:frontend && npm run deploy:frontend"
+  },
+  "dependencies": {
+    "@types/xlsx": "^0.0.36",
+    "pnpm": "^10.26.2",
+    "xlsx": "^0.18.5"
+  }
+}

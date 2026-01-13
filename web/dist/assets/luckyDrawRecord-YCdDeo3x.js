@@ -1,0 +1,1 @@
+const e={user_id:"用户ID",prize_id:"奖品ID",prize_name:"奖品名称",prize_type:"奖品类型",prize_value:"奖品数值",status:"状态",draw_time:"抽奖时间",send_time:"发放时间",status_pending:"待发放",status_send:"已发放",status_revoke:"已撤销",prize_type_score:"积分",prize_type_money:"金额",prize_type_coupon:"优惠券",prize_type_item:"实物",send_prize:"发放奖品",revoke_prize:"撤销奖品"};export{e as default};

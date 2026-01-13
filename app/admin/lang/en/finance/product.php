@@ -1,0 +1,30 @@
+<?php
+return [
+    'Id' => 'ID',
+    'Name' => 'Name',
+    'Slug' => 'Slug',
+    'Thumbnail' => 'Thumbnail',
+    'Summary' => 'Summary',
+    'Price' => 'Price',
+    'Cycle Days' => 'Cycle (days)',
+    'Yield Rate' => 'Yield Rate (%)',
+    'Total Amount' => 'Total Amount',
+    'Sold Amount' => 'Sold Amount',
+    'Remaining Amount' => 'Remaining Amount',
+    'Min Purchase' => 'Min Purchase',
+    'Max Purchase' => 'Max Purchase',
+    'Status' => 'Status',
+    'Sort' => 'Sort',
+    'Createtime' => 'Create Time',
+    'Updatetime' => 'Update Time',
+    'Name is required' => 'Name is required',
+    'Price must be numeric' => 'Price must be numeric',
+    'Total amount must be integer' => 'Total amount must be integer',
+    'Min purchase must be greater than zero' => 'Min purchase must be greater than zero',
+    'Status value is incorrect' => 'Status value is incorrect',
+    'Finance Product Management' => 'Finance Product Management',
+    'Add Finance Product' => 'Add Finance Product',
+    'Edit Finance Product' => 'Edit Finance Product',
+];
+
+

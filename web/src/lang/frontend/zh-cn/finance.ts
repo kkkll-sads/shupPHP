@@ -1,0 +1,28 @@
+export default {
+    Title: '理财优选专区',
+    Subtitle: '精选旅游主题理财产品，轻松规划财富旅程',
+    'Explore products': '探索理财产品',
+    'Product list title': '热销理财产品',
+    'Product list desc': '多种收益周期组合，满足不同资金规划需求',
+    Price: '售价',
+    Cycle: '周期',
+    Days: '天',
+    Yield: '收益率',
+    'Sold out': '已售 {sold} 份',
+    'Sold total': '累计已售 {sold} 份',
+    Remaining: '剩余 {remaining} 份',
+    Unlimited: '不限量',
+    'Buy now': '立即认购',
+    'Purchase dialog title': '确认认购信息',
+    Quantity: '认购份数',
+    'Min purchase tip': '最小认购份数：{min} 份',
+    'Max purchase tip': '最大认购份数：{max} 份',
+    'Total amount': '应付金额',
+    'Confirm purchase': '确认购买',
+    'Purchase success': '购买完成，平台将为您生成记录',
+    'Purchase failed': '购买失败，请稍后重试',
+    'Login required': '请先登录后再进行购买',
+    'Default summary': '高品质旅游主题理财，兼顾收益与体验。',
+}
+
+

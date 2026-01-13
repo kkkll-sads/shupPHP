@@ -1,0 +1,26 @@
+export default {
+    Id: 'ID',
+    Name: '产品名称',
+    Slug: '唯一标识',
+    Thumbnail: '缩略图',
+    Summary: '简介',
+    Price: '价格金额',
+    'Cycle Days': '周期(天)',
+    'Yield Rate': '收益率(%)',
+    'Total Amount': '总数量',
+    'Sold Amount': '已售数量',
+    'Remaining Amount': '剩余数量',
+    'Min Purchase': '最小购买份数',
+    'Max Purchase': '最大购买份数',
+    Status: '状态',
+    Sort: '排序',
+    Createtime: '创建时间',
+    Updatetime: '更新时间',
+    'Name is required': '产品名称不能为空',
+    'Price must be numeric': '价格必须为数字',
+    'Total amount must be integer': '总数量必须为整数',
+    'Min purchase must be greater than zero': '最小购买份数必须大于0',
+    'Status value is incorrect': '状态值不正确',
+}
+
+

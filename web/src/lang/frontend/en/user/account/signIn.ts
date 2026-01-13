@@ -1,0 +1,22 @@
+export default {
+    'Stats title': 'Sign-in statistics',
+    'Total points': 'Total sign-in points',
+    'Today points': 'Today points',
+    'Streak days': 'Streak (days)',
+    'Sign days summary': 'Signed in for {days} days',
+    'Action title': 'Daily reward',
+    'Signed today': 'Signed in today',
+    'Not signed today': 'Not yet signed',
+    'Daily reward tip': 'Daily sign-in grants {score} points',
+    'Referrer reward tip': 'Your inviter receives {score} points per day',
+    'Sign now': 'Sign in now',
+    'Calendar title': 'Sign-in calendar',
+    'Record title': 'Sign-in records',
+    'Record date': 'Date',
+    'Record reward': 'Points',
+    'Record time': 'Created at',
+    'Success title': 'Sign-in success',
+    'Success reward': 'You received {score} points',
+    'Success referrer': 'Your inviter received {score} points',
+}
+
