@@ -151,12 +151,14 @@ class StatusDict
      */
     const PAY_TYPE_MONEY = 'money';  // 余额支付
     const PAY_TYPE_SCORE = 'score';   // 消费金支付
-    
+    const PAY_TYPE_COMBINED = 'combined';   // 组合支付
+
     public static function getPayTypeMap(): array
     {
         return [
             self::PAY_TYPE_MONEY => '余额支付',
             self::PAY_TYPE_SCORE => '消费金支付',
+            self::PAY_TYPE_COMBINED => '组合支付',
         ];
     }
     

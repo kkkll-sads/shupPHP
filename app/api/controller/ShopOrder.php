@@ -26,13 +26,18 @@ class ShopOrder extends Frontend
         Apidoc\Param(name: "items", type: "array", require: true, desc: "商品列表"),
         Apidoc\Param(name: "items[].product_id", type: "int", require: true, desc: "商品ID"),
         Apidoc\Param(name: "items[].quantity", type: "int", require: true, desc: "购买数量"),
-        Apidoc\Param(name: "pay_type", type: "string", require: true, desc: "支付方式: money=余额, score=消费金"),
+        Apidoc\Param(name: "pay_type", type: "string", require: false, desc: "支付方式（已废弃，系统自动计算价格）"),
         Apidoc\Param(name: "address_id", type: "int", require: false, desc: "收货地址ID（实物商品必填）"),
         Apidoc\Param(name: "remark", type: "string", require: false, desc: "订单备注"),
         Apidoc\Returned("order_no", type: "string", desc: "订单号"),
         Apidoc\Returned("order_id", type: "int", desc: "订单ID"),
         Apidoc\Returned("total_amount", type: "float", desc: "订单总金额"),
         Apidoc\Returned("total_score", type: "int", desc: "订单总消费金"),
+        Apidoc\Returned("items", type: "array", desc: "订单商品列表"),
+        Apidoc\Returned("items[].price", type: "float", desc: "商品价格"),
+        Apidoc\Returned("items[].score_price", type: "float", desc: "商品积分价格"),
+        Apidoc\Returned("balance_available", type: "string", desc: "用户可用余额"),
+        Apidoc\Returned("score", type: "string", desc: "用户消费金"),
     ]
     public function create(): void
     {
@@ -41,16 +46,12 @@ class ShopOrder extends Frontend
         }
 
         $items = $this->request->param('items/a', []);
-        $payType = $this->request->param('pay_type', '');
+        $payType = $this->request->param('pay_type', ''); // 向后兼容，但不再使用
         $addressId = $this->request->param('address_id/d', 0);
         $remark = $this->request->param('remark', '');
 
         if (empty($items)) {
             $this->error('购物车不能为空');
-        }
-
-        if (!in_array($payType, ['money', 'score'])) {
-            $this->error('支付方式不正确');
         }
 
         $userId = $this->auth->id;
@@ -86,10 +87,6 @@ class ShopOrder extends Frontend
                     throw new \Exception('商品不存在或已下架');
                 }
 
-                // 验证购买方式
-                if ($product['purchase_type'] != 'both' && $product['purchase_type'] != $payType) {
-                    throw new \Exception('商品【' . $product['name'] . '】不支持该支付方式');
-                }
 
                 // 验证库存
                 if ($product['stock'] < $quantity) {
@@ -101,13 +98,18 @@ class ShopOrder extends Frontend
                     $hasPhysical = true;
                 }
 
-                // 计算小计
+                // 计算小计：根据商品的价格自动计费
                 $subtotal = 0;
                 $subtotalScore = 0;
-                if ($payType == 'money') {
+
+                // 如果商品有人民币价格，就计入总金额
+                if ($product['price'] > 0) {
                     $subtotal = $product['price'] * $quantity;
                     $totalAmount += $subtotal;
-                } else {
+                }
+
+                // 如果商品有消费金价格，就计入总消费金
+                if ($product['score_price'] > 0) {
                     $subtotalScore = $product['score_price'] * $quantity;
                     $totalScore += $subtotalScore;
                 }
@@ -159,13 +161,23 @@ class ShopOrder extends Frontend
                 }
             }
             
+            // 根据订单金额确定支付类型
+            $payTypeValue = 'score'; // 默认
+            if ($totalAmount > 0 && $totalScore > 0) {
+                $payTypeValue = 'combined'; // 同时需要人民币和消费金
+            } elseif ($totalAmount > 0) {
+                $payTypeValue = 'money'; // 只需要人民币
+            } elseif ($totalScore > 0) {
+                $payTypeValue = 'score'; // 只需要消费金
+            }
+
             // 订单初始状态为待付款
             $orderData = [
                 'order_no' => $orderNo,
                 'user_id' => $userId,
                 'total_amount' => $totalAmount,
                 'total_score' => $totalScore,
-                'pay_type' => $payType,
+                'pay_type' => $payTypeValue,
                 'status' => 'pending', // 待付款
                 'remark' => $remark,
                 'pay_time' => 0,
@@ -206,6 +218,46 @@ class ShopOrder extends Frontend
 
             Db::commit();
 
+            // 记录用户活动日志
+            $productNames = array_map(function($item) {
+                return $item['product_name'] . ' x' . $item['quantity'];
+            }, $orderItems);
+            $productNamesStr = implode('、', $productNames);
+
+            Db::name('user_activity_log')->insert([
+                'user_id' => $userId,
+                'related_user_id' => 0,
+                'action_type' => 'shop_order_create',
+                'change_field' => 'order_status',
+                'change_value' => 'pending',
+                'before_value' => '',
+                'after_value' => 'pending',
+                'remark' => '创建商城订单，等待支付',
+                'extra' => json_encode([
+                    'order_no' => $orderNo,
+                    'order_id' => $orderId,
+                    'item_count' => count($orderItems),
+                    'pay_type' => $payTypeValue,
+                    'total_amount' => $totalAmount,
+                    'total_score' => $totalScore,
+                    'products' => $productNamesStr,
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+                'update_time' => time(),
+            ]);
+
+            // 获取用户信息
+            $userInfo = $this->auth->getUserInfo();
+
+            // 构建返回的商品信息
+            $returnItems = [];
+            foreach ($orderItems as $item) {
+                $returnItems[] = [
+                    'price' => $item['price'],
+                    'score_price' => $item['score_price'],
+                ];
+            }
+
             // 返回订单信息，提示用户去支付
             $this->success('订单创建成功，请完成支付', [
                 'order_no' => $orderNo,
@@ -213,7 +265,10 @@ class ShopOrder extends Frontend
                 'total_amount' => $totalAmount,
                 'total_score' => $totalScore,
                 'status' => 'pending',
-                'pay_type' => $payType,
+                'pay_type' => $payTypeValue,
+                'items' => $returnItems,
+                'balance_available' => $userInfo['balance_available'] ?? '0.00',
+                'score' => $userInfo['score'] ?? '0.00',
             ]);
 
         } catch (HttpResponseException $e) {
@@ -241,9 +296,13 @@ class ShopOrder extends Frontend
         Apidoc\Url("/api/shopOrder/pay"),
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
         Apidoc\Param(name: "order_id", type: "int", require: true, desc: "订单ID"),
+        Apidoc\Param(name: "pay_money", type: "float", require: false, desc: "使用可用金额支付的金额（不传则根据订单类型自动支付）", default: "0"),
+        Apidoc\Param(name: "pay_score", type: "float", require: false, desc: "使用消费金支付的金额（不传则根据订单类型自动支付）", default: "0"),
         Apidoc\Returned("order_no", type: "string", desc: "订单号"),
         Apidoc\Returned("order_id", type: "int", desc: "订单ID"),
         Apidoc\Returned("status", type: "string", desc: "订单状态"),
+        Apidoc\Returned("pay_money", type: "float", desc: "实际使用可用金额支付的金额"),
+        Apidoc\Returned("pay_score", type: "float", desc: "实际使用消费金支付的金额"),
     ]
     public function pay(): void
     {
@@ -252,8 +311,22 @@ class ShopOrder extends Frontend
         }
 
         $orderId = $this->request->param('order_id/d', 0);
+        $payMoney = $this->request->param('pay_money/f', 0);
+        $payScore = $this->request->param('pay_score/f', 0);
+
         if (!$orderId) {
             $this->error('参数错误');
+        }
+
+        // 验证支付金额参数
+        if ($payMoney < 0 || $payScore < 0) {
+            $this->error('支付金额不能为负数');
+        }
+
+        // 如果没有指定支付金额，则根据订单的原始支付类型自动设置支付金额
+        $autoPayMode = ($payMoney == 0 && $payScore == 0);
+        if ($autoPayMode) {
+            // 标记为自动支付模式，后续会根据订单信息设置支付金额
         }
 
         $userId = $this->auth->id;
@@ -275,6 +348,23 @@ class ShopOrder extends Frontend
                 throw new \Exception('订单状态不正确，无法支付');
             }
 
+            // 如果是自动支付模式，根据订单的原始支付类型设置支付金额
+            if ($autoPayMode) {
+                if ($order['pay_type'] == 'money') {
+                    $payMoney = $order['total_amount'];
+                    $payScore = 0;
+                } elseif ($order['pay_type'] == 'score') {
+                    $payMoney = 0;
+                    $payScore = $order['total_score'];
+                } elseif ($order['pay_type'] == 'combined') {
+                    // 组合支付：同时扣除人民币和消费金
+                    $payMoney = $order['total_amount'];
+                    $payScore = $order['total_score'];
+                } else {
+                    throw new \Exception('订单支付类型不支持自动支付');
+                }
+            }
+
             // 2. 查询用户并锁定
             $user = Db::name('user')
                 ->where('id', $userId)
@@ -285,38 +375,55 @@ class ShopOrder extends Frontend
                 throw new \Exception('用户不存在');
             }
 
-            // 3. 验证用户余额或积分
-            if ($order['pay_type'] == 'money') {
-                if ($user['money'] < $order['total_amount']) {
-                    throw new \Exception('余额不足，当前余额：' . number_format($user['money'], 2) . '元');
-                }
-            } else {
-                if ($user['score'] < $order['total_score']) {
-                    throw new \Exception('积分不足，当前积分：' . $user['score']);
-                }
+            // 3. 验证用户余额和消费金
+            if ($user['balance_available'] < $payMoney) {
+                throw new \Exception('可用金额不足，当前可用金额：' . number_format($user['balance_available'], 2) . '元');
             }
 
-            // 4. 扣除余额或积分
-            if ($order['pay_type'] == 'money') {
-                $beforeMoney = $user['money'];
-                $afterMoney = $beforeMoney - $order['total_amount'];
-                Db::name('user')->where('id', $userId)->update(['money' => $afterMoney]);
+            if ($user['score'] < $payScore) {
+                throw new \Exception('消费金不足，当前消费金：' . $user['score']);
+            }
 
-                // 记录余额日志
+            // 验证支付金额是否与订单总价值匹配（可用金额价值 + 消费金价值）
+            $orderTotalValue = $order['total_amount'] + $order['total_score'];
+            $totalPayAmount = $payMoney + $payScore;
+            if ($totalPayAmount != $orderTotalValue) {
+                throw new \Exception('支付金额与订单总价值不匹配，订单总价值：' . number_format($orderTotalValue, 2));
+            }
+
+            // 4. 扣除可用金额和消费金
+            $beforeMoney = $user['balance_available'];
+            $beforeScore = $user['score'];
+            $afterMoney = $beforeMoney - $payMoney;
+            $afterScore = $beforeScore - $payScore;
+
+            $updateData = [];
+            if ($payMoney > 0) {
+                $updateData['balance_available'] = $afterMoney;
+            }
+            if ($payScore > 0) {
+                $updateData['score'] = $afterScore;
+            }
+
+            if (!empty($updateData)) {
+                Db::name('user')->where('id', $userId)->update($updateData);
+            }
+
+            // 记录可用金额日志
+            if ($payMoney > 0) {
                 Db::name('user_money_log')->insert([
                     'user_id' => $userId,
-                    'money' => -$order['total_amount'],
+                    'field_type' => 'balance_available',
+                    'money' => -$payMoney,
                     'before' => $beforeMoney,
                     'after' => $afterMoney,
-                    'memo' => '商城购物消费',
+                    'memo' => '商城购物消费（可用金额）',
                     'create_time' => time(),
                 ]);
-            } else {
-                $beforeScore = $user['score'];
-                $afterScore = $beforeScore - $order['total_score'];
-                Db::name('user')->where('id', $userId)->update(['score' => $afterScore]);
+            }
 
-                // 记录积分日志
+            // 记录消费金日志
+            if ($payScore > 0) {
                 $flowNo = generateSJSFlowNo($userId);
                 $batchNo = generateBatchNo('SHOP_ORDER', $orderId);
                 Db::name('user_score_log')->insert([
@@ -325,7 +432,7 @@ class ShopOrder extends Frontend
                     'batch_no' => $batchNo,
                     'biz_type' => 'shop_order',
                     'biz_id' => $orderId,
-                    'score' => -$order['total_score'],
+                    'score' => -$payScore,
                     'before' => $beforeScore,
                     'after' => $afterScore,
                     'memo' => '商城消费金支付',
@@ -396,6 +503,7 @@ class ShopOrder extends Frontend
                 ->where('id', $orderId)
                 ->update([
                     'status' => $orderStatus,
+                    'balance_available_amount' => $payMoney,
                     'pay_time' => time(),
                     'complete_time' => $completeTime,
                     'update_time' => time(),
@@ -419,21 +527,35 @@ class ShopOrder extends Frontend
                 ];
             }, $orderItems);
             
+            // 记录用户活动日志
+            $changeField = 'combined';
+            $changeValue = 0;
+            if ($order['total_amount'] > 0 && $order['total_score'] > 0) {
+                $changeField = 'combined';
+                $changeValue = -$order['total_amount'] - $order['total_score'];
+            } elseif ($order['total_amount'] > 0) {
+                $changeField = 'balance_available';
+                $changeValue = -$order['total_amount'];
+            } elseif ($order['total_score'] > 0) {
+                $changeField = 'score';
+                $changeValue = -$order['total_score'];
+            }
+
             Db::name('user_activity_log')->insert([
                 'user_id' => $userId,
                 'related_user_id' => 0,
                 'action_type' => 'shop_purchase',
-                'change_field' => $order['pay_type'] == 'money' ? 'money' : 'score',
-                'change_value' => $order['pay_type'] == 'money' ? -$order['total_amount'] : -$order['total_score'],
-                'before_value' => $order['pay_type'] == 'money' ? $beforeMoney : $beforeScore,
-                'after_value' => $order['pay_type'] == 'money' ? $afterMoney : $afterScore,
+                'change_field' => $changeField,
+                'change_value' => $changeValue,
+                'before_value' => $order['total_amount'] > 0 ? $beforeMoney : $beforeScore,
+                'after_value' => $order['total_amount'] > 0 ? $afterMoney : $afterScore,
                 'remark' => '商城购物：' . $productNamesStr,
                 'extra' => json_encode([
                     'order_no' => $order['order_no'],
                     'order_id' => $orderId,
                     'item_count' => count($orderItems),
                     'pay_type' => $order['pay_type'],
-                    'pay_type_text' => $order['pay_type'] == 'money' ? '余额支付' : '消费金支付',
+                    'pay_type_text' => $order['pay_type'] == 'combined' ? '组合支付' : ($order['pay_type'] == 'money' ? '余额支付' : '消费金支付'),
                     'products' => $productsDetail,
                 ], JSON_UNESCAPED_UNICODE),
                 'create_time' => time(),
@@ -456,6 +578,8 @@ class ShopOrder extends Frontend
                 'order_no' => $order['order_no'],
                 'order_id' => $orderId,
                 'status' => $orderStatus,
+                'pay_money' => $payMoney,
+                'pay_score' => $payScore,
             ]);
 
         } catch (HttpResponseException $e) {
@@ -482,7 +606,6 @@ class ShopOrder extends Frontend
         Apidoc\Param(name: "items", type: "array", require: true, desc: "商品列表"),
         Apidoc\Param(name: "items[].product_id", type: "int", require: true, desc: "商品ID"),
         Apidoc\Param(name: "items[].quantity", type: "int", require: true, desc: "购买数量"),
-        Apidoc\Param(name: "pay_type", type: "string", require: true, desc: "支付方式: money=余额, score=消费金"),
         Apidoc\Param(name: "address_id", type: "int", require: false, desc: "收货地址ID（实物商品必填）"),
         Apidoc\Param(name: "remark", type: "string", require: false, desc: "订单备注"),
         Apidoc\Returned("order_no", type: "string", desc: "订单号"),
@@ -498,16 +621,11 @@ class ShopOrder extends Frontend
         }
 
         $items = $this->request->param('items/a', []);
-        $payType = $this->request->param('pay_type', '');
         $addressId = $this->request->param('address_id/d', 0);
         $remark = $this->request->param('remark', '');
 
         if (empty($items)) {
             $this->error('购物车不能为空');
-        }
-
-        if (!in_array($payType, ['money', 'score'])) {
-            $this->error('支付方式不正确');
         }
 
         $userId = $this->auth->id;
@@ -543,10 +661,6 @@ class ShopOrder extends Frontend
                     throw new \Exception('商品不存在或已下架');
                 }
 
-                // 验证购买方式
-                if ($product['purchase_type'] != 'both' && $product['purchase_type'] != $payType) {
-                    throw new \Exception('商品【' . $product['name'] . '】不支持该支付方式');
-                }
 
                 // 验证库存
                 if ($product['stock'] < $quantity) {
@@ -558,13 +672,18 @@ class ShopOrder extends Frontend
                     $hasPhysical = true;
                 }
 
-                // 计算小计
+                // 计算小计：根据商品的价格自动计费
                 $subtotal = 0;
                 $subtotalScore = 0;
-                if ($payType == 'money') {
+
+                // 如果商品有人民币价格，就计入总金额
+                if ($product['price'] > 0) {
                     $subtotal = $product['price'] * $quantity;
                     $totalAmount += $subtotal;
-                } else {
+                }
+
+                // 如果商品有消费金价格，就计入总消费金
+                if ($product['score_price'] > 0) {
                     $subtotalScore = $product['score_price'] * $quantity;
                     $totalScore += $subtotalScore;
                 }
@@ -609,14 +728,13 @@ class ShopOrder extends Frontend
                 throw new \Exception('用户不存在');
             }
 
-            if ($payType == 'money') {
-                if ($user['money'] < $totalAmount) {
-                    throw new \Exception('余额不足，当前余额：' . number_format($user['money'], 2) . '元');
-                }
-            } else {
-                if ($user['score'] < $totalScore) {
-                    throw new \Exception('积分不足，当前积分：' . $user['score']);
-                }
+            // 检查用户是否有足够的余额和消费金
+            if ($totalAmount > 0 && $user['balance_available'] < $totalAmount) {
+                throw new \Exception('可用金额不足，当前可用金额：' . number_format($user['balance_available'], 2) . '元');
+            }
+
+            if ($totalScore > 0 && $user['score'] < $totalScore) {
+                throw new \Exception('消费金不足，当前消费金：' . $user['score']);
             }
 
             // 4. 先创建订单（待支付状态，稍后更新为已支付）
@@ -648,12 +766,22 @@ class ShopOrder extends Frontend
                 $completeTime = time();
             }
             
+            // 根据订单金额确定支付类型
+            $payTypeValue = 'score'; // 默认
+            if ($totalAmount > 0 && $totalScore > 0) {
+                $payTypeValue = 'combined'; // 同时需要人民币和消费金
+            } elseif ($totalAmount > 0) {
+                $payTypeValue = 'money'; // 只需要人民币
+            } elseif ($totalScore > 0) {
+                $payTypeValue = 'score'; // 只需要消费金
+            }
+
             $orderData = [
                 'order_no' => $orderNo,
                 'user_id' => $userId,
                 'total_amount' => $totalAmount,
                 'total_score' => $totalScore,
-                'pay_type' => $payType,
+                'pay_type' => $payTypeValue,
                 'status' => $orderStatus,
                 'remark' => $remark,
                 'pay_time' => time(),
@@ -676,13 +804,28 @@ class ShopOrder extends Frontend
                 throw new \Exception('创建订单失败');
             }
 
-            // 5. 扣除余额或积分
-            if ($payType == 'money') {
-                $beforeMoney = $user['money'];
-                $afterMoney = $beforeMoney - $totalAmount;
-                Db::name('user')->where('id', $userId)->update(['money' => $afterMoney]);
+            // 5. 扣除用户余额和消费金
+            $beforeMoney = $user['balance_available'];
+            $beforeScore = $user['score'];
+            $afterMoney = $beforeMoney;
+            $afterScore = $beforeScore;
 
-                // 记录余额日志
+            $updateData = [];
+            if ($totalAmount > 0) {
+                $afterMoney = $beforeMoney - $totalAmount;
+                $updateData['balance_available'] = $afterMoney;
+            }
+            if ($totalScore > 0) {
+                $afterScore = $beforeScore - $totalScore;
+                $updateData['score'] = $afterScore;
+            }
+
+            if (!empty($updateData)) {
+                Db::name('user')->where('id', $userId)->update($updateData);
+            }
+
+            // 记录余额日志
+            if ($totalAmount > 0) {
                 $flowNo = generateSJSFlowNo($userId);
                 $batchNo = generateBatchNo('SHOP_ORDER', $orderId);
                 Db::name('user_money_log')->insert([
@@ -695,15 +838,13 @@ class ShopOrder extends Frontend
                     'money' => -$totalAmount,
                     'before' => $beforeMoney,
                     'after' => $afterMoney,
-                    'memo' => '商城购物消费',
+                    'memo' => '商城购物消费（可用金额）',
                     'create_time' => time(),
                 ]);
-            } else {
-                $beforeScore = $user['score'];
-                $afterScore = $beforeScore - $totalScore;
-                Db::name('user')->where('id', $userId)->update(['score' => $afterScore]);
+            }
 
-                // 记录积分日志
+            // 记录消费金日志
+            if ($totalScore > 0) {
                 $flowNo = generateSJSFlowNo($userId);
                 $batchNo = generateBatchNo('SHOP_ORDER', $orderId);
                 Db::name('user_score_log')->insert([
@@ -775,21 +916,35 @@ class ShopOrder extends Frontend
                 ];
             }, $orderItems);
             
+            // 记录用户活动日志
+            $changeField = 'combined';
+            $changeValue = 0;
+            if ($totalAmount > 0 && $totalScore > 0) {
+                $changeField = 'combined';
+                $changeValue = -$totalAmount - $totalScore;
+            } elseif ($totalAmount > 0) {
+                $changeField = 'balance_available';
+                $changeValue = -$totalAmount;
+            } elseif ($totalScore > 0) {
+                $changeField = 'score';
+                $changeValue = -$totalScore;
+            }
+
             Db::name('user_activity_log')->insert([
                 'user_id' => $userId,
                 'related_user_id' => 0,
                 'action_type' => 'shop_purchase',
-                'change_field' => $payType == 'money' ? 'money' : 'score',
-                'change_value' => $payType == 'money' ? -$totalAmount : -$totalScore,
-                'before_value' => $payType == 'money' ? $beforeMoney : $beforeScore,
-                'after_value' => $payType == 'money' ? $afterMoney : $afterScore,
+                'change_field' => $changeField,
+                'change_value' => $changeValue,
+                'before_value' => $totalAmount > 0 ? $beforeMoney : $beforeScore,
+                'after_value' => $totalAmount > 0 ? $afterMoney : $afterScore,
                 'remark' => '商城购物：' . $productNamesStr,
                 'extra' => json_encode([
                     'order_no' => $orderNo,
                     'order_id' => $orderId,
                     'item_count' => count($orderItems),
-                    'pay_type' => $payType,
-                    'pay_type_text' => $payType == 'money' ? '余额支付' : '消费金支付',
+                    'pay_type' => $payTypeValue,
+                    'pay_type_text' => $payTypeValue == 'combined' ? '组合支付' : ($payTypeValue == 'money' ? '余额支付' : '消费金支付'),
                     'products' => $productsDetail,
                 ], JSON_UNESCAPED_UNICODE),
                 'create_time' => time(),
@@ -878,6 +1033,28 @@ class ShopOrder extends Frontend
 
             // 3. 处理不同状态的订单
             if ($order['status'] == 'pending') {
+                // 记录用户活动日志
+                Db::name('user_activity_log')->insert([
+                    'user_id' => $userId,
+                    'related_user_id' => 0,
+                    'action_type' => 'shop_order_cancel',
+                    'change_field' => 'order_status',
+                    'change_value' => 'cancelled',
+                    'before_value' => 'pending',
+                    'after_value' => 'deleted',
+                    'remark' => '取消待支付订单，删除订单记录',
+                    'extra' => json_encode([
+                        'order_no' => $order['order_no'],
+                        'order_id' => $orderId,
+                        'total_amount' => $order['total_amount'],
+                        'total_score' => $order['total_score'],
+                        'pay_type' => $order['pay_type'],
+                        'operation' => 'delete_pending_order',
+                    ], JSON_UNESCAPED_UNICODE),
+                    'create_time' => time(),
+                    'update_time' => time(),
+                ]);
+
                 // 待支付订单：直接删除记录
                 // 删除订单明细
                 Db::name('shop_order_item')
@@ -910,9 +1087,9 @@ class ShopOrder extends Frontend
 
                 // 退还积分或余额
                 if ($order['pay_type'] == 'money') {
-                    $beforeMoney = $user['money'];
+                    $beforeMoney = $user['balance_available'];
                     $afterMoney = $beforeMoney + $order['total_amount'];
-                    Db::name('user')->where('id', $userId)->update(['money' => $afterMoney]);
+                    Db::name('user')->where('id', $userId)->update(['balance_available' => $afterMoney]);
 
                     // 记录余额日志
                     $flowNo = generateSJSFlowNo($userId);
@@ -960,6 +1137,26 @@ class ShopOrder extends Frontend
                         'update_time' => time(),
                     ]);
 
+                // 记录用户活动日志
+                Db::name('user_activity_log')->insert([
+                    'user_id' => $userId,
+                    'related_user_id' => 0,
+                    'action_type' => 'shop_order_cancel',
+                    'change_field' => $order['pay_type'] == 'money' ? 'money' : 'score',
+                    'change_value' => $order['pay_type'] == 'money' ? $order['total_amount'] : $order['total_score'],
+                    'before_value' => $order['pay_type'] == 'money' ? $beforeMoney : $beforeScore,
+                    'after_value' => $order['pay_type'] == 'money' ? $afterMoney : $afterScore,
+                    'remark' => '取消商城订单，退款到账户',
+                    'extra' => json_encode([
+                        'order_no' => $order['order_no'],
+                        'order_id' => $orderId,
+                        'pay_type' => $order['pay_type'],
+                        'refund_amount' => $order['pay_type'] == 'money' ? $order['total_amount'] : $order['total_score'],
+                    ], JSON_UNESCAPED_UNICODE),
+                    'create_time' => time(),
+                    'update_time' => time(),
+                ]);
+
                 Db::commit();
 
                 $this->success('订单取消成功，已退款到您的账户', [
@@ -994,6 +1191,8 @@ class ShopOrder extends Frontend
         Apidoc\Query(name: "limit", type: "int", require: false, desc: "每页数量", default: "10"),
         Apidoc\Query(name: "status", type: "string", require: false, desc: "订单状态"),
         Apidoc\Returned("list", type: "array", desc: "订单列表"),
+        Apidoc\Returned("balance_available", type: "string", desc: "用户可用余额"),
+        Apidoc\Returned("score", type: "string", desc: "用户消费金"),
     ]
     public function myOrders(): void
     {
@@ -1088,7 +1287,8 @@ class ShopOrder extends Frontend
 
             $payTypeMap = [
                 'money' => '余额支付',
-                'score' => '积分兑换',
+                'score' => '消费金支付',
+                'combined' => '组合支付',
             ];
             $order['pay_type_text'] = $payTypeMap[$order['pay_type']] ?? $order['pay_type'];
         }
@@ -1097,11 +1297,16 @@ class ShopOrder extends Frontend
             ->where($where)
             ->count();
 
+        // 获取用户信息
+        $userInfo = $this->auth->getUserInfo();
+
         $this->success('', [
             'list' => $list,
             'total' => $total,
             'page' => $page,
             'limit' => $limit,
+            'balance_available' => $userInfo['balance_available'] ?? '0.00',
+            'score' => $userInfo['score'] ?? '0.00',
         ]);
     }
 
@@ -1168,6 +1373,8 @@ class ShopOrder extends Frontend
         Apidoc\Url("/api/shopOrder/detail"),
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
         Apidoc\Query(name: "id", type: "int", require: true, desc: "订单ID"),
+        Apidoc\Returned("balance_available", type: "string", desc: "用户可用余额"),
+        Apidoc\Returned("score", type: "string", desc: "用户消费金"),
     ]
     public function detail(): void
     {
@@ -1257,10 +1464,17 @@ class ShopOrder extends Frontend
         $payTypeMap = [
             'money' => '余额支付',
             'score' => '消费金支付',
+            'combined' => '组合支付',
         ];
         $order['pay_type_text'] = $payTypeMap[$order['pay_type']] ?? $order['pay_type'];
 
-        $this->success('', $order);
+        // 获取用户信息
+        $userInfo = $this->auth->getUserInfo();
+
+        $this->success('', array_merge($order, [
+            'balance_available' => $userInfo['balance_available'] ?? '0.00',
+            'score' => $userInfo['score'] ?? '0.00',
+        ]));
     }
 
     #[
@@ -1272,6 +1486,8 @@ class ShopOrder extends Frontend
         Apidoc\Query(name: "page", type: "int", require: false, desc: "页码", default: "1"),
         Apidoc\Query(name: "limit", type: "int", require: false, desc: "每页数量", default: "10"),
         Apidoc\Returned("list", type: "array", desc: "待发货订单列表"),
+        Apidoc\Returned("balance_available", type: "string", desc: "用户可用余额"),
+        Apidoc\Returned("score", type: "string", desc: "用户消费金"),
     ]
     public function pendingShip(): void
     {
@@ -1354,7 +1570,8 @@ class ShopOrder extends Frontend
 
             $payTypeMap = [
                 'money' => '余额支付',
-                'score' => '积分兑换',
+                'score' => '消费金支付',
+                'combined' => '组合支付',
             ];
             $order['pay_type_text'] = $payTypeMap[$order['pay_type']] ?? $order['pay_type'];
         }
@@ -1363,11 +1580,16 @@ class ShopOrder extends Frontend
             ->where($where)
             ->count();
 
+        // 获取用户信息
+        $userInfo = $this->auth->getUserInfo();
+
         $this->success('', [
             'list' => $list,
             'total' => $total,
             'page' => $page,
             'limit' => $limit,
+            'balance_available' => $userInfo['balance_available'] ?? '0.00',
+            'score' => $userInfo['score'] ?? '0.00',
         ]);
     }
 
@@ -1380,6 +1602,8 @@ class ShopOrder extends Frontend
         Apidoc\Query(name: "page", type: "int", require: false, desc: "页码", default: "1"),
         Apidoc\Query(name: "limit", type: "int", require: false, desc: "每页数量", default: "10"),
         Apidoc\Returned("list", type: "array", desc: "待确认收货订单列表"),
+        Apidoc\Returned("balance_available", type: "string", desc: "用户可用余额"),
+        Apidoc\Returned("score", type: "string", desc: "用户消费金"),
     ]
     public function pendingConfirm(): void
     {
@@ -1456,7 +1680,8 @@ class ShopOrder extends Frontend
 
             $payTypeMap = [
                 'money' => '余额支付',
-                'score' => '积分兑换',
+                'score' => '消费金支付',
+                'combined' => '组合支付',
             ];
             $order['pay_type_text'] = $payTypeMap[$order['pay_type']] ?? $order['pay_type'];
         }
@@ -1465,11 +1690,16 @@ class ShopOrder extends Frontend
             ->where($where)
             ->count();
 
+        // 获取用户信息
+        $userInfo = $this->auth->getUserInfo();
+
         $this->success('', [
             'list' => $list,
             'total' => $total,
             'page' => $page,
             'limit' => $limit,
+            'balance_available' => $userInfo['balance_available'] ?? '0.00',
+            'score' => $userInfo['score'] ?? '0.00',
         ]);
     }
 
@@ -1515,6 +1745,25 @@ class ShopOrder extends Frontend
                     'complete_time' => time(),
                     'update_time' => time(),
                 ]);
+
+            // 记录用户活动日志
+            Db::name('user_activity_log')->insert([
+                'user_id' => $this->auth->id,
+                'related_user_id' => 0,
+                'action_type' => 'shop_order_confirm',
+                'change_field' => 'order_status',
+                'change_value' => 'completed',
+                'before_value' => 'shipped',
+                'after_value' => 'completed',
+                'remark' => '确认收货，订单完成',
+                'extra' => json_encode([
+                    'order_no' => $order['order_no'],
+                    'order_id' => $id,
+                    'complete_time' => time(),
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+                'update_time' => time(),
+            ]);
 
             Db::commit();
             $this->success('确认收货成功');
@@ -1612,7 +1861,8 @@ class ShopOrder extends Frontend
 
             $payTypeMap = [
                 'money' => '余额支付',
-                'score' => '积分兑换',
+                'score' => '消费金支付',
+                'combined' => '组合支付',
             ];
             $order['pay_type_text'] = $payTypeMap[$order['pay_type']] ?? $order['pay_type'];
         }
@@ -1621,11 +1871,16 @@ class ShopOrder extends Frontend
             ->where($where)
             ->count();
 
+        // 获取用户信息
+        $userInfo = $this->auth->getUserInfo();
+
         $this->success('', [
             'list' => $list,
             'total' => $total,
             'page' => $page,
             'limit' => $limit,
+            'balance_available' => $userInfo['balance_available'] ?? '0.00',
+            'score' => $userInfo['score'] ?? '0.00',
         ]);
     }
 
@@ -1638,6 +1893,8 @@ class ShopOrder extends Frontend
         Apidoc\Query(name: "page", type: "int", require: false, desc: "页码", default: "1"),
         Apidoc\Query(name: "limit", type: "int", require: false, desc: "每页数量", default: "10"),
         Apidoc\Returned("list", type: "array", desc: "已完成订单列表"),
+        Apidoc\Returned("balance_available", type: "string", desc: "用户可用余额"),
+        Apidoc\Returned("score", type: "string", desc: "用户消费金"),
     ]
     public function completed(): void
     {
@@ -1714,7 +1971,8 @@ class ShopOrder extends Frontend
 
             $payTypeMap = [
                 'money' => '余额支付',
-                'score' => '积分兑换',
+                'score' => '消费金支付',
+                'combined' => '组合支付',
             ];
             $order['pay_type_text'] = $payTypeMap[$order['pay_type']] ?? $order['pay_type'];
         }
@@ -1723,11 +1981,16 @@ class ShopOrder extends Frontend
             ->where($where)
             ->count();
 
+        // 获取用户信息
+        $userInfo = $this->auth->getUserInfo();
+
         $this->success('', [
             'list' => $list,
             'total' => $total,
             'page' => $page,
             'limit' => $limit,
+            'balance_available' => $userInfo['balance_available'] ?? '0.00',
+            'score' => $userInfo['score'] ?? '0.00',
         ]);
     }
 
@@ -1770,6 +2033,27 @@ class ShopOrder extends Frontend
             if ($order['status'] != 'pending') {
                 throw new \Exception('只能删除待支付状态的订单');
             }
+
+            // 记录用户活动日志
+            Db::name('user_activity_log')->insert([
+                'user_id' => $userId,
+                'related_user_id' => 0,
+                'action_type' => 'shop_order_delete',
+                'change_field' => 'order_status',
+                'change_value' => 'deleted',
+                'before_value' => 'pending',
+                'after_value' => 'deleted',
+                'remark' => '删除待支付订单',
+                'extra' => json_encode([
+                    'order_no' => $order['order_no'],
+                    'order_id' => $orderId,
+                    'total_amount' => $order['total_amount'],
+                    'total_score' => $order['total_score'],
+                    'pay_type' => $order['pay_type'],
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+                'update_time' => time(),
+            ]);
 
             // 3. 删除订单明细
             Db::name('shop_order_item')

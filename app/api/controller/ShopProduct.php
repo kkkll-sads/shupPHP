@@ -50,6 +50,8 @@ class ShopProduct extends Frontend
         Apidoc\Returned("list[].thumbnail", type: "string", desc: "商品缩略图路径"),
         Apidoc\Returned("list[].category", type: "string", desc: "商品分类"),
         Apidoc\Returned("list[].price", type: "float", desc: "商品价格（余额）"),
+        Apidoc\Returned("list[].green_power_amount", type: "float", desc: "消费金支付金额"),
+        Apidoc\Returned("list[].balance_available_amount", type: "float", desc: "可用金额支付金额"),
         Apidoc\Returned("list[].score_price", type: "int", desc: "积分价格"),
         Apidoc\Returned("list[].stock", type: "int", desc: "库存数量"),
         Apidoc\Returned("list[].sales", type: "int", desc: "销量"),
@@ -84,6 +86,8 @@ class ShopProduct extends Frontend
                 'thumbnail',
                 'category',
                 'price',
+                'green_power_ratio',
+                'balance_available_ratio',
                 'score_price',
                 'stock',
                 'sales',
@@ -95,10 +99,17 @@ class ShopProduct extends Frontend
             ->select()
             ->toArray();
 
-        // 处理图片路径
+        // 处理图片路径和价格计算
         foreach ($list as &$item) {
             $item['thumbnail'] = $this->extractPath($item['thumbnail']);
             $item['price'] = (float)$item['price'];
+
+            // 计算消费金和可用金额的具体金额
+            $item['green_power_amount'] = round($item['price'] * ($item['green_power_ratio'] / 100), 2);
+            $item['balance_available_amount'] = round($item['price'] * ($item['balance_available_ratio'] / 100), 2);
+
+            // 移除比例字段，只返回具体金额
+            unset($item['green_power_ratio'], $item['balance_available_ratio']);
         }
 
         $total = Db::name('shop_product')
@@ -126,6 +137,8 @@ class ShopProduct extends Frontend
         Apidoc\Returned("description", type: "string", desc: "商品详细描述"),
         Apidoc\Returned("category", type: "string", desc: "商品分类"),
         Apidoc\Returned("price", type: "float", desc: "商品价格（余额）"),
+        Apidoc\Returned("green_power_amount", type: "float", desc: "消费金支付金额"),
+        Apidoc\Returned("balance_available_amount", type: "float", desc: "可用金额支付金额"),
         Apidoc\Returned("score_price", type: "int", desc: "积分价格"),
         Apidoc\Returned("stock", type: "int", desc: "库存数量"),
         Apidoc\Returned("sales", type: "int", desc: "销量"),
@@ -164,6 +177,13 @@ class ShopProduct extends Frontend
 
         $detail['price'] = (float)$detail['price'];
 
+        // 计算消费金和可用金额的具体金额
+        $detail['green_power_amount'] = round($detail['price'] * ($detail['green_power_ratio'] / 100), 2);
+        $detail['balance_available_amount'] = round($detail['price'] * ($detail['balance_available_ratio'] / 100), 2);
+
+        // 移除比例字段，只返回具体金额
+        unset($detail['green_power_ratio'], $detail['balance_available_ratio']);
+
         $this->success('', $detail);
     }
 
@@ -201,6 +221,8 @@ class ShopProduct extends Frontend
         Apidoc\Returned("list[].thumbnail", type: "string", desc: "商品缩略图路径"),
         Apidoc\Returned("list[].category", type: "string", desc: "商品分类"),
         Apidoc\Returned("list[].price", type: "float", desc: "商品价格（余额）"),
+        Apidoc\Returned("list[].green_power_amount", type: "float", desc: "消费金支付金额"),
+        Apidoc\Returned("list[].balance_available_amount", type: "float", desc: "可用金额支付金额"),
         Apidoc\Returned("list[].score_price", type: "int", desc: "积分价格"),
         Apidoc\Returned("list[].stock", type: "int", desc: "库存数量"),
         Apidoc\Returned("list[].sales", type: "int", desc: "销量"),
@@ -231,6 +253,8 @@ class ShopProduct extends Frontend
                 'thumbnail',
                 'category',
                 'price',
+                'green_power_ratio',
+                'balance_available_ratio',
                 'score_price',
                 'stock',
                 'sales',
@@ -274,6 +298,8 @@ class ShopProduct extends Frontend
         Apidoc\Returned("list[].thumbnail", type: "string", desc: "商品缩略图路径"),
         Apidoc\Returned("list[].category", type: "string", desc: "商品分类"),
         Apidoc\Returned("list[].price", type: "float", desc: "商品价格（余额）"),
+        Apidoc\Returned("list[].green_power_amount", type: "float", desc: "消费金支付金额"),
+        Apidoc\Returned("list[].balance_available_amount", type: "float", desc: "可用金额支付金额"),
         Apidoc\Returned("list[].score_price", type: "int", desc: "积分价格"),
         Apidoc\Returned("list[].stock", type: "int", desc: "库存数量"),
         Apidoc\Returned("list[].sales", type: "int", desc: "销量"),
@@ -304,6 +330,8 @@ class ShopProduct extends Frontend
                 'thumbnail',
                 'category',
                 'price',
+                'green_power_ratio',
+                'balance_available_ratio',
                 'score_price',
                 'stock',
                 'sales',
