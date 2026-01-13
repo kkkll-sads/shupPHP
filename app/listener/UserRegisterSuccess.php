@@ -235,31 +235,34 @@ class UserRegisterSuccess
                 return; // 已经发放过，不再重复发放
             }
 
-            // 获取当前有效的活动
-            $activity = SignInActivity::getActiveActivity();
-            if (!$activity || !$activity->isActive()) {
-                return; // 没有有效活动，不发放奖励
-            }
-
-            $inviteRewardMin = (float)$activity->invite_reward_min;
-            $inviteRewardMax = (float)$activity->invite_reward_max;
-            
-            // 🔧 获取邀请奖励算力配置
+            // 🔧 获取邀请奖励算力配置（不依赖活动）
             $inviteRewardPower = (float)get_sys_config('invite_reward_power', 0);
             
-            // 如果金额和算力都为0，不发放
+            // 获取当前有效的活动（用于金额奖励）
+            $activity = SignInActivity::getActiveActivity();
+            $hasActiveActivity = $activity && $activity->isActive();
+            
+            $inviteRewardMin = 0;
+            $inviteRewardMax = 0;
+            if ($hasActiveActivity) {
+                $inviteRewardMin = (float)$activity->invite_reward_min;
+                $inviteRewardMax = (float)$activity->invite_reward_max;
+            }
+            
+            // 🔧 修复：如果金额和算力都为0，不发放
+            // 但算力奖励不依赖活动，只要有配置就应该发放
             if (($inviteRewardMin <= 0 || $inviteRewardMax <= 0) && $inviteRewardPower <= 0) {
                 return; // 奖励为0，不发放
             }
 
-            // 生成随机金额
+            // 生成随机金额（仅在有活动时）
             $inviteReward = 0;
-            if ($inviteRewardMin > 0 && $inviteRewardMax > 0) {
+            if ($hasActiveActivity && $inviteRewardMin > 0 && $inviteRewardMax > 0) {
                 $inviteReward = $this->generateRandomMoney($inviteRewardMin, $inviteRewardMax);
             }
 
             // 在事务中发放奖励
-            Db::transaction(function () use ($inviterId, $newUserId, $inviteReward, $inviteRewardPower, $activity) {
+            Db::transaction(function () use ($inviterId, $newUserId, $inviteReward, $inviteRewardPower, $activity, $hasActiveActivity) {
                 // 获取邀请人信息
                 $inviter = \app\common\model\User::where('id', $inviterId)->lock(true)->find();
                 if (!$inviter) {
@@ -335,9 +338,9 @@ class UserRegisterSuccess
                             ? sprintf('邀请好友获得金额：%.2f元（被邀请用户ID：%d）', $change['value'], $newUserId)
                             : sprintf('邀请好友获得算力：%.2f（被邀请用户ID：%d）', $change['value'], $newUserId),
                         'extra' => [
-                            'activity_id' => $activity->id,
-                            'activity_name' => $activity->name,
-                            'fund_source' => $activity->fund_source,
+                            'activity_id' => $hasActiveActivity ? $activity->id : 0,
+                            'activity_name' => $hasActiveActivity ? $activity->name : '',
+                            'fund_source' => $hasActiveActivity ? $activity->fund_source : '',
                             'invite_reward' => $inviteReward,
                             'invite_reward_power' => $inviteRewardPower,
                             'invited_user_id' => $newUserId,

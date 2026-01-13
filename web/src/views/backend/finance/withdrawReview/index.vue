@@ -44,7 +44,7 @@
 
         <TableHeader
             :buttons="['refresh', 'export', 'add', 'edit', 'delete', 'comSearch', 'quickSearch', 'columnDisplay']"
-            quick-search-placeholder="快速搜索：申请方名称/类型"
+            quick-search-placeholder="快速搜索：申请方名称/类型/手机号"
         />
 
         <Table />

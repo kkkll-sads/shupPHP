@@ -13,131 +13,130 @@ use think\facade\Log;
  */
 class UserCollection extends Backend
 {
-    protected string|array $quickSearchField = ['mobile', 'nickname', 'item_title'];
+    protected string|array $quickSearchField = ['id']; // 临时设置为 id，避免 queryBuilder 处理关联表字段
+    
+    protected string|array $defaultSortField = 'uc.id desc';
+    
+    protected bool $modelSceneValidate = false;
 
     public function initialize(): void
     {
         parent::initialize();
+        // 由于没有对应的 Model，我们需要手动设置表名
+        $this->model = Db::name('user_collection');
     }
 
     /**
      * 用户藏品列表
-     * 支持按手机号、昵称、藏品名称搜索
+     * 支持 BuildAdmin 标准查询方式
      * @throws Throwable
      */
     public function index(): void
     {
-        $mobile = $this->request->param('mobile', '');
-        $userId = $this->request->param('user_id/d', 0);
-        $itemId = $this->request->param('item_id/d', 0);
-        $consignmentStatus = $this->request->param('consignment_status', '');
-        $page = $this->request->param('page/d', 1);
-        $limit = $this->request->param('limit/d', 20);
-        $keyword = $this->request->param('quick_search', '');
-
-        $query = Db::name('user_collection')
-            ->alias('uc')
-            ->leftJoin('user u', 'uc.user_id = u.id')
-            ->leftJoin('collection_item ci', 'uc.item_id = ci.id')
-            ->leftJoin('collection_session cs', 'ci.session_id = cs.id');
-
-        // 手机号精确查询
-        if ($mobile) {
-            $query->where('u.mobile', $mobile);
+        if ($this->request->param('select')) {
+            $this->select();
         }
 
-        // 用户ID精确查询
-        if ($userId > 0) {
-            $query->where('uc.user_id', $userId);
+        [$where, $alias, $limit, $order] = $this->queryBuilder();
+        
+        $aliasName = current($alias);
+        
+        // 手动处理快速搜索（因为关联表字段无法通过 queryBuilder 正确处理）
+        $quickSearch = $this->request->get('quickSearch/s', '');
+        if (!empty($quickSearch)) {
+            // 移除 queryBuilder 生成的快速搜索条件（如果有）
+            foreach ($where as $k => $v) {
+                if (is_array($v) && isset($v[0]) && is_string($v[0])) {
+                    $fieldName = $v[0];
+                    // 如果是快速搜索条件（包含 id 字段的 OR 条件，或者是我们设置的临时字段）
+                    if (strpos($fieldName, 'id') !== false && strpos($fieldName, '|') === false) {
+                        // 检查是否是快速搜索生成的 id 条件
+                        if (isset($v[2]) && strpos($v[2], $quickSearch) !== false) {
+                            unset($where[$k]);
+                        }
+                    }
+                }
+            }
+            // 重新索引数组
+            $where = array_values($where);
+            
+            // 添加正确的快速搜索条件（使用关联表字段）
+            $where[] = function($query) use ($quickSearch, $aliasName) {
+                $query->where('u.mobile', 'like', "%{$quickSearch}%")
+                      ->whereOr('u.nickname', 'like', "%{$quickSearch}%")
+                      ->whereOr($aliasName . '.title', 'like', "%{$quickSearch}%")
+                      ->whereOr('ci.asset_code', 'like', "%{$quickSearch}%");
+            };
         }
-
-        // 藏品ID精确查询
-        if ($itemId > 0) {
-            $query->where('uc.item_id', $itemId);
-        }
-
-        // 寄售状态筛选
-        if ($consignmentStatus !== '') {
-            $query->where('uc.consignment_status', (int)$consignmentStatus);
-        }
-
-        // 关键词搜索（手机号、昵称、藏品名称）
-        if ($keyword) {
-            $query->where(function ($q) use ($keyword) {
-                $q->where('u.mobile', 'like', "%{$keyword}%")
-                  ->whereOr('u.nickname', 'like', "%{$keyword}%")
-                  ->whereOr('uc.title', 'like', "%{$keyword}%")
-                  ->whereOr('ci.asset_code', 'like', "%{$keyword}%");
-            });
-        }
-
-        // 获取总数
-        $total = $query->count();
-
-        // 获取列表
-        $list = $query
+        
+        $res = Db::name('user_collection')
+            ->alias($aliasName)
+            ->leftJoin('ba_user u', "u.id = {$aliasName}.user_id")
+            ->leftJoin('ba_collection_item ci', "ci.id = {$aliasName}.item_id")
+            ->leftJoin('ba_collection_session cs', "cs.id = ci.session_id")
+            ->where($where)
             ->field([
-                'uc.id',
-                'uc.user_id',
+                "{$aliasName}.id",
+                "{$aliasName}.user_id",
                 'u.mobile',
                 'u.nickname',
                 'u.avatar',
-                'uc.item_id',
-                'uc.title as item_title',
-                'uc.image as item_image',
-                'uc.price as buy_price',
-                'uc.order_id',
-                'uc.buy_time',
-                'uc.delivery_status',
-                'uc.consignment_status',
-                'uc.free_consign_attempts',
-                'uc.is_old_asset_package',
-                'uc.create_time',
+                "{$aliasName}.item_id",
+                "{$aliasName}.title as item_title",
+                "{$aliasName}.image as item_image",
+                "{$aliasName}.price as buy_price",
+                "{$aliasName}.order_id",
+                "{$aliasName}.buy_time",
+                "{$aliasName}.delivery_status",
+                "{$aliasName}.consignment_status",
+                "{$aliasName}.free_consign_attempts",
+                "{$aliasName}.is_old_asset_package",
+                "{$aliasName}.create_time",
                 'ci.price as current_price',
                 'ci.issue_price',
                 'ci.asset_code',
                 'ci.tx_hash',
                 'ci.zone_id',
-                'uc.mining_status',
-                'uc.mining_start_time',
+                "{$aliasName}.mining_status",
+                "{$aliasName}.mining_start_time",
                 'cs.title as session_title',
                 'cs.id as session_id',
             ])
-            ->order('uc.id desc')
-            ->page($page, $limit)
-            ->select()
-            ->toArray();
+            ->order($order)
+            ->paginate($limit);
 
+        $list = $res->items();
+        
         // 格式化数据
         $deliveryStatusMap = [0 => '已交付', 1 => '待交付'];
         $consignmentStatusMap = [0 => '未寄售', 1 => '寄售中', 2 => '已售出'];
 
         foreach ($list as &$row) {
-            $row['buy_time_text'] = $row['buy_time'] ? date('Y-m-d H:i:s', $row['buy_time']) : '';
-            $row['create_time_text'] = $row['create_time'] ? date('Y-m-d H:i:s', $row['create_time']) : '';
-            $row['delivery_status_text'] = $deliveryStatusMap[$row['delivery_status']] ?? '未知';
-            $row['consignment_status_text'] = $consignmentStatusMap[$row['consignment_status']] ?? '未知';
-            $row['is_old_asset_package_text'] = $row['is_old_asset_package'] == 1 ? '是' : '否';
-            $row['item_image'] = $row['item_image'] ? full_url($row['item_image'], false) : '';
-            $row['mining_status_text'] = $row['mining_status'] == 1 ? '矿机运行中' : '未转为矿机';
-            $row['mining_start_time_text'] = $row['mining_start_time'] ? date('Y-m-d H:i:s', $row['mining_start_time']) : '';
-            $row['buy_price'] = (float)$row['buy_price'];
-            $row['current_price'] = (float)($row['current_price'] ?? 0);
-            $row['issue_price'] = (float)($row['issue_price'] ?? 0);
+            $row->buy_time_text = $row->buy_time ? date('Y-m-d H:i:s', $row->buy_time) : '';
+            $row->create_time_text = $row->create_time ? date('Y-m-d H:i:s', $row->create_time) : '';
+            $row->delivery_status_text = $deliveryStatusMap[$row->delivery_status] ?? '未知';
+            $row->consignment_status_text = $consignmentStatusMap[$row->consignment_status] ?? '未知';
+            $row->is_old_asset_package_text = $row->is_old_asset_package == 1 ? '是' : '否';
+            $row->item_image = $row->item_image ? full_url($row->item_image, false) : '';
+            $row->mining_status_text = $row->mining_status == 1 ? '矿机运行中' : '未转为矿机';
+            $row->mining_start_time_text = $row->mining_start_time ? date('Y-m-d H:i:s', $row->mining_start_time) : '';
+            $row->buy_price = (float)$row->buy_price;
+            $row->current_price = (float)($row->current_price ?? 0);
+            $row->issue_price = (float)($row->issue_price ?? 0);
             
             // 计算增值
-            if ($row['buy_price'] > 0 && $row['current_price'] > 0) {
-                $row['appreciation'] = round($row['current_price'] - $row['buy_price'], 2);
-                $row['appreciation_rate'] = round(($row['current_price'] - $row['buy_price']) / $row['buy_price'] * 100, 2) . '%';
+            if ($row->buy_price > 0 && $row->current_price > 0) {
+                $row->appreciation = round($row->current_price - $row->buy_price, 2);
+                $row->appreciation_rate = round(($row->current_price - $row->buy_price) / $row->buy_price * 100, 2) . '%';
             } else {
-                $row['appreciation'] = 0;
-                $row['appreciation_rate'] = '0%';
+                $row->appreciation = 0;
+                $row->appreciation_rate = '0%';
             }
         }
 
         $this->success('', [
             'list' => $list,
-            'total' => $total,
+            'total' => $res->total(),
             'remark' => get_route_remark(),
         ]);
     }

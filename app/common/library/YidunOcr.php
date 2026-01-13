@@ -525,7 +525,7 @@ class YidunOcr
             'name'       => $realName,
             'cardNo'     => $idCard,
             'redirectUrl' => $redirectUrl,
-            'callBackUrl' => 'https://shu.gckot.cn/api/user/submitRealName',
+            'callBackUrl' => 'https://wap.dfahwk.cn/api/user/submitRealName',
         ];
 
         $params = $this->toUtf8($params);
