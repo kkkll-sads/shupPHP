@@ -51,6 +51,8 @@ class CompanyPaymentAccount extends Backend
                 'alipay' => '支付宝',
                 'wechat' => '微信',
                 'usdt' => 'USDT',
+                'digital_rmb' => '数字人民币',
+                'unionpay' => '银联快捷',
             ];
             $item->type_text = $typeMap[$item->type] ?? '未知';
 
@@ -61,6 +63,8 @@ class CompanyPaymentAccount extends Backend
                     'alipay' => '/static/images/payment/alipay.png',
                     'wechat' => '/static/images/payment/wechat.png',
                     'usdt' => '/static/images/payment/usdt.png',
+                    'digital_rmb' => '/static/images/payment/digital_rmb.png',
+                    'unionpay' => '/static/images/payment/unionpay.png',
                 ];
                 $item->icon = $defaultIcons[$item->type] ?? '';
             }
@@ -105,7 +109,7 @@ class CompanyPaymentAccount extends Backend
             if (empty($data['type'])) {
                 $this->error('账户类型不能为空');
             }
-            if (!in_array($data['type'], ['bank_card', 'alipay', 'wechat', 'usdt'])) {
+            if (!in_array($data['type'], ['bank_card', 'alipay', 'wechat', 'usdt', 'digital_rmb', 'unionpay'])) {
                 $this->error('账户类型不正确');
             }
             if (empty($data['account_name'])) {
@@ -189,7 +193,7 @@ class CompanyPaymentAccount extends Backend
             }
 
             // 验证必填字段
-            if (isset($data['type']) && !in_array($data['type'], ['bank_card', 'alipay', 'wechat', 'usdt'])) {
+            if (isset($data['type']) && !in_array($data['type'], ['bank_card', 'alipay', 'wechat', 'usdt', 'digital_rmb', 'unionpay'])) {
                 $this->error('账户类型不正确');
             }
             if (isset($data['status']) && !array_key_exists((int)$data['status'], CompanyPaymentAccountModel::getStatusMap())) {
