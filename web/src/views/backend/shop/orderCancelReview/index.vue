@@ -16,7 +16,7 @@
                     <div style="font-size: 24px; font-weight: bold; margin-top: 5px; color: #67c23a;">{{ stats.approved_count }}</div>
                 </el-card>
             </el-col>
-            <el-col :xs=24" :sm="8">
+            <el-col :xs="24" :sm="8">
                 <el-card shadow="never" body-style="padding: 15px;">
                     <div style="font-size: 14px; color: #909399;">已拒绝</div>
                     <div style="font-size: 24px; font-weight: bold; margin-top: 5px; color: #f56c6c;">{{ stats.rejected_count }}</div>
