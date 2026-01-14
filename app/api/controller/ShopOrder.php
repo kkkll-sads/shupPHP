@@ -996,9 +996,12 @@ class ShopOrder extends Frontend
         Apidoc\Url("/api/shopOrder/cancel"),
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
         Apidoc\Param(name: "order_id", type: "int", require: true, desc: "订单ID"),
+        Apidoc\Param(name: "cancel_reason", type: "string", require: false, desc: "取消原因（超过24小时必填）"),
         Apidoc\Returned("order_no", type: "string", desc: "订单号"),
         Apidoc\Returned("order_id", type: "int", desc: "订单ID"),
-        Apidoc\Returned("status", type: "string", desc: "订单状态"),
+        Apidoc\Returned("status", type: "string", desc: "订单状态或审核状态"),
+        Apidoc\Returned("need_review", type: "bool", desc: "是否需要审核"),
+        Apidoc\Returned("review_id", type: "int", desc: "审核记录ID（need_review=true时返回）"),
     ]
     public function cancel(): void
     {
@@ -1007,11 +1010,14 @@ class ShopOrder extends Frontend
         }
 
         $orderId = $this->request->param('order_id/d', 0);
+        $cancelReason = $this->request->param('cancel_reason/s', '');
+        
         if (!$orderId) {
             $this->error('参数错误');
         }
 
         $userId = $this->auth->id;
+        $now = time();
 
         Db::startTrans();
         try {
@@ -1030,8 +1036,76 @@ class ShopOrder extends Frontend
             if (!in_array($order['status'], ['pending', 'paid'])) {
                 throw new \Exception('订单状态不允许取消');
             }
+            
+            // 3. 判断是否在24小时内（仅对已支付订单）
+            $orderCreateTime = (int)$order['create_time'];
+            $hoursSinceCreate = ($now - $orderCreateTime) / 3600;
+            $needReview = false;
+            
+            if ($order['status'] == 'paid' && $hoursSinceCreate > 24) {
+                // 超过24小时，需要审核
+                $needReview = true;
+                
+                if (empty($cancelReason)) {
+                    throw new \Exception('订单已超过24小时，请填写取消原因');
+                }
+                
+                // 检查是否已有待审核的申请
+                $existingReview = Db::name('shop_order_cancel_review')
+                    ->where('order_id', $orderId)
+                    ->where('status', 0) // 待审核
+                    ->find();
+                    
+                if ($existingReview) {
+                    throw new \Exception('该订单已有待审核的取消申请，请勿重复提交');
+                }
+                
+                // 创建审核记录
+                $reviewId = Db::name('shop_order_cancel_review')->insertGetId([
+                    'order_id' => $orderId,
+                    'order_no' => $order['order_no'],
+                    'user_id' => $userId,
+                    'cancel_reason' => $cancelReason,
+                    'order_create_time' => $orderCreateTime,
+                    'apply_time' => $now,
+                    'status' => 0, // 待审核
+                    'create_time' => $now,
+                    'update_time' => $now,
+                ]);
+                
+                // 记录活动日志
+                Db::name('user_activity_log')->insert([
+                    'user_id' => $userId,
+                    'related_user_id' => 0,
+                    'action_type' => 'shop_order_cancel_apply',
+                    'change_field' => 'order_status',
+                    'change_value' => 'pending_review',
+                    'before_value' => $order['status'],
+                    'after_value' => 'pending_review',
+                    'remark' => '提交订单取消审核申请',
+                    'extra' => json_encode([
+                        'order_no' => $order['order_no'],
+                        'order_id' => $orderId,
+                        'review_id' => $reviewId,
+                        'cancel_reason' => $cancelReason,
+                        'hours_since_create' => round($hoursSinceCreate, 2),
+                    ], JSON_UNESCAPED_UNICODE),
+                    'create_time' => $now,
+                    'update_time' => $now,
+                ]);
+                
+                Db::commit();
+                
+                $this->success('订单取消申请已提交，等待管理员审核', [
+                    'order_no' => $order['order_no'],
+                    'order_id' => $orderId,
+                    'need_review' => true,
+                    'review_id' => $reviewId,
+                    'status' => 'pending_review',
+                ]);
+            }
 
-            // 3. 处理不同状态的订单
+            // 4. 处理不同状态的订单（24小时内或待支付）
             if ($order['status'] == 'pending') {
                 // 记录用户活动日志
                 Db::name('user_activity_log')->insert([
@@ -1072,9 +1146,10 @@ class ShopOrder extends Frontend
                     'order_no' => $order['order_no'],
                     'order_id' => $orderId,
                     'status' => 'deleted',
+                    'need_review' => false,
                 ]);
             } else {
-                // 已支付订单：退款并更新状态
+                // 已支付订单（24小时内）：直接退款并更新状态
                 // 查询用户并锁定
                 $user = Db::name('user')
                     ->where('id', $userId)
@@ -1159,10 +1234,11 @@ class ShopOrder extends Frontend
 
                 Db::commit();
 
-                $this->success('订单取消成功，已退款到您的账户', [
+                $this->success('订单取消成功，已退款到您的账户（24小时内免审核）', [
                     'order_no' => $order['order_no'],
                     'order_id' => $orderId,
                     'status' => 'cancelled',
+                    'need_review' => false,
                 ]);
             }
 

@@ -21,7 +21,7 @@
                             <div class="alert-tip">转为矿机后，每天会自动发放分红：</div>
                             <div class="alert-tip">&nbsp;&nbsp;&nbsp;&nbsp;• 可设置按藏品当前价格的比例分红（如价格374元，按1%比例分红3.74元）</div>
                             <div class="alert-tip">&nbsp;&nbsp;&nbsp;&nbsp;• 也可设置固定金额分红（如每日10元）</div>
-                            <div class="alert-tip">&nbsp;&nbsp;&nbsp;&nbsp;• 分红按配置比例分配到余额和积分</div>
+                            <div class="alert-tip">&nbsp;&nbsp;&nbsp;&nbsp;• 分红按配置比例分配到余额和消费金</div>
                         </template>
                     </el-alert>
                 </el-form-item>
@@ -71,7 +71,7 @@
                         </el-form-item>
                     </el-col>
                     <el-col :xs="24" :sm="12">
-                        <el-form-item label="分红积分分配比例">
+                        <el-form-item label="分红消费金分配比例">
                             <el-input-number v-model="collectionMiningConfig.dividend_score_rate" :min="0" :max="1" :step="0.01" :precision="2" controls-position="right" style="width: 200px;" />
                             <span class="form-tip">例如：0.5 表示 50%</span>
                         </el-form-item>
@@ -135,7 +135,7 @@ const fetchCollectionMiningConfig = () => {
 const saveCollectionMiningConfig = () => {
     const total = totalMiningDividendRate.value
     if (total > 1.01 || total < 0.99) {
-        ElMessage.warning('分红余额分配比例和分红积分分配比例之和必须等于1（100%）')
+        ElMessage.warning('分红余额分配比例和分红消费金分配比例之和必须等于1（100%）')
         return
     }
     if (collectionMiningConfig.continuous_fail_count < 1 || collectionMiningConfig.continuous_fail_count > 100) {

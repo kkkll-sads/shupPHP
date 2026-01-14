@@ -931,7 +931,7 @@ class DrawCountConfig extends Backend
                         ];
                         $tipMap = [
                             'consignment_profit_balance' => '交易结算时，利润中分配给余额的比例（0-1之间，例如0.5表示50%）',
-                            'consignment_profit_score' => '交易结算时，利润中分配给积分的比例（0-1之间，例如0.5表示50%）',
+                            'consignment_profit_score' => '交易结算时，利润中分配给消费金的比例（0-1之间，例如0.5表示50%）',
                         ];
                         \think\facade\Db::name('config')->insert([
                             'name' => $name,
@@ -1086,11 +1086,11 @@ class DrawCountConfig extends Backend
                     $this->error('分红余额分配比例必须在0-1之间');
                 }
                 if ($dividendScoreRate < 0 || $dividendScoreRate > 1) {
-                    $this->error('分红积分分配比例必须在0-1之间');
+                    $this->error('分红消费金分配比例必须在0-1之间');
                 }
                 $totalRate = $dividendBalanceRate + $dividendScoreRate;
                 if (abs($totalRate - 1.0) > 0.0001) {
-                    $this->error('分红余额分配比例和分红积分分配比例之和必须等于1（100%）');
+                    $this->error('分红余额分配比例和分红消费金分配比例之和必须等于1（100%）');
                 }
                 if ($dailyDividendAmount < 0) {
                     $this->error('每日分红金额必须为非负数');
@@ -1120,7 +1120,7 @@ class DrawCountConfig extends Backend
                             'mining_long_term_days' => '长期滞销天数',
                             'mining_price_top_multiple' => '价格触顶倍数',
                             'mining_dividend_balance' => '分红余额分配比例',
-                            'mining_dividend_score' => '分红积分分配比例',
+                            'mining_dividend_score' => '分红消费金分配比例',
                             'mining_daily_dividend' => '每日分红金额',
                             'mining_dividend_price_rate' => '分红价格比例',
                         ];
@@ -1129,7 +1129,7 @@ class DrawCountConfig extends Backend
                             'mining_long_term_days' => '持有超过此天数还没卖掉（或没操作上架）时，触发强制锁仓转为矿机',
                             'mining_price_top_multiple' => '现价超过发行价的此倍数时，触发强制锁仓转为矿机',
                             'mining_dividend_balance' => '矿机每日分红中分配给余额的比例（0-1之间，例如0.5表示50%）',
-                            'mining_dividend_score' => '矿机每日分红中分配给积分的比例（0-1之间，例如0.5表示50%）',
+                            'mining_dividend_score' => '矿机每日分红中分配给消费金的比例（0-1之间，例如0.5表示50%）',
                             'mining_daily_dividend' => '矿机每日分红总金额（元），当价格比例为0时使用此固定金额',
                             'mining_dividend_price_rate' => '按藏品当前价格的比例计算分红（0-1之间，例如0.01表示1%；设置为0则使用固定金额分红）',
                         ];

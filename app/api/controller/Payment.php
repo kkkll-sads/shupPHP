@@ -15,7 +15,7 @@ class Payment extends Frontend
 {
     protected array $noNeedLogin = [
         'dakaNotify', 'xiongmaoNotify', 'qipilangNotify', 'daka2Notify', 'zhiyangNotify',
-        'shandianNotify', 'sanjianNotify',
+        'shandianNotify'
     ];
     
     protected static $notifyUrl = 'http://23.248.226.82:5657/api/Payment/';
@@ -64,8 +64,6 @@ class Payment extends Frontend
                 $pay_url = self::lelePay($order_no, $amount, $orderType, $code);
             } else if ($payment['bank_name'] == '闪电支付') {
                 $pay_url = self::shandianPay($order_no, $amount, $orderType, $code);
-            } else if ($payment['bank_name'] == '三剑支付') {
-                $pay_url = self::sanjianPay($order_no, $amount, $orderType, $code);
             }
             if ($pay_url) {
                 return ['code'=> 0, 'data'=> $pay_url, 'order'=> $order, 'orderType' => $orderType, 'cannelId' => $code, 'cannelName' => $payment['bank_name']];
@@ -76,43 +74,6 @@ class Payment extends Frontend
             return ['code'=> 1, 'data'=> $e->__toString()];
         }
     }
-    
-    ////////////////////////////// 三剑支付 //////////////////////////////
-    public static function sanjianPay($order_no, $amount, $orderType, $code)
-    {
-        $signBody = [];
-        $signBody['mchid'] = '80372';
-        $signBody['version'] = '1.0.1';
-        $signBody['out_trade_no'] = $order_no.'-'.$orderType;
-        $signBody['amount'] = $amount;
-        $signBody['notify_url'] = self::$notifyUrl.'sanjianNotify';
-        $signBody['return_url'] = self::$notifyUrl.'sanjianNotify';
-        $signBody['time_stamp'] = date('YmdHis');
-        $signBody['channel'] = $code;
-        $signBody['body'] = '王老吉';
-        $signBody['ext_code'] = 10086;
-        $signBody['sign'] = self::generateSign($signBody, 'JkRdx03adJMmZKAowJk0tRTb8Rtl4Ot0jm6umnc5', false);
-        $result = self::http_curl('https://gateway.ssjpay.com/api/payOrder/v2/create', $signBody, 'form', '三剑支付');
-        if (!isset($result['code']) || $result['code'] != 0) {
-            return null;
-        }
-        return $result['data']['request_url'] ?? '';
-    }
-    
-    public function sanjianNotify()
-    {
-        $params = $this->getInputParam();
-        if (!empty($params['order_status']) && ($params['order_status'] == 1 || $params['order_status'] == 8)) {
-            $parts = explode('-', $params['out_trade_no']);
-            $order_sn = $parts[0];
-            $orderType = $parts[1];
-            $result = $this->hanldNotify($order_sn, $orderType, 'SUCCESS');
-            echo $result;
-        } else {
-            echo 'fail';
-        }
-    }
-    ////////////////////////////// 三剑支付 END //////////////////////////////
     
     ////////////////////////////// 闪电支付 //////////////////////////////
     public static function shandianPay($order_no, $amount, $orderType, $code)

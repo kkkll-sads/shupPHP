@@ -603,10 +603,14 @@ class CollectionItem extends Frontend
     Apidoc\Query(name: "zone_id", type: "int", require: true, desc: "价格分区ID（必填，如1=500元区）"),
     Apidoc\Query(name: "package_id", type: "int", require: true, desc: "资产包ID（必填）"),
         Apidoc\Query(name: "extra_hashrate", type: "float", require: false, desc: "额外加注算力（用于增加权重）", default: 0),
-        Apidoc\Returned("reservation_id", type: "int", desc: "预约记录ID"),
-        Apidoc\Returned("freeze_amount", type: "float", desc: "冻结金额（分区最高价）"),
-        Apidoc\Returned("power_used", type: "float", desc: "消耗的算力"),
-        Apidoc\Returned("weight", type: "int", desc: "获得的权重"),
+        Apidoc\Query(name: "quantity", type: "int", require: false, desc: "申购数量（默认1，最大100）", default: 1),
+        Apidoc\Returned("reservation_ids", type: "array", desc: "预约记录ID列表"),
+        Apidoc\Returned("quantity", type: "int", desc: "申购数量"),
+        Apidoc\Returned("total_freeze_amount", type: "float", desc: "总冻结金额"),
+        Apidoc\Returned("total_power_used", type: "float", desc: "总消耗算力"),
+        Apidoc\Returned("single_freeze_amount", type: "float", desc: "单个冻结金额"),
+        Apidoc\Returned("single_power_used", type: "float", desc: "单个消耗算力"),
+        Apidoc\Returned("weight", type: "int", desc: "获得的权重（每个）"),
         Apidoc\Returned("zone_name", type: "string", desc: "分区名称"),
         Apidoc\Returned("package_id", type: "int", desc: "资产包ID"),
         Apidoc\Returned("package_name", type: "string", desc: "资产包名称"),
@@ -618,13 +622,22 @@ class CollectionItem extends Frontend
             $this->error('请先登录', [], 401);
         }
 
-        // 盲盒预约模式：必填 session_id + zone_id + package_id，可选 extra_hashrate
+        // 盲盒预约模式：必填 session_id + zone_id + package_id，可选 extra_hashrate + quantity
         $sessionId = $this->request->param('session_id/d', 0);
         $zoneId = $this->request->param('zone_id/d', 0);
         $packageId = $this->request->param('package_id/d', 0);
         $extraHashrate = (float)$this->request->param('extra_hashrate/f', 0.0);
+        $quantity = $this->request->param('quantity/d', 1);
 
         $userId = $this->auth->id;
+        
+        // 验证申购数量
+        if ($quantity < 1) {
+            $this->error('申购数量不能小于1');
+        }
+        if ($quantity > 100) {
+            $this->error('单次申购数量不能超过100');
+        }
 
         // 参数验证
         if ($zoneId <= 0 || $sessionId <= 0) {
@@ -684,15 +697,20 @@ class CollectionItem extends Frontend
             $this->error("加注范围：0-{$maxBoost}点");
         }
 
-        $totalHashrate = $baseCost + $extraHashrate;
+        // 单个申购的算力和权重
+        $singleHashrate = $baseCost + $extraHashrate;
         $finalWeight = (int)(100 + ($extraHashrate * $boostRatio));
         
-        // 冻结金额 = 分区最高价
-        $freezeAmount = (float)$zone['max_price'];
-        if ($freezeAmount <= 0) {
+        // 单个冻结金额 = 分区最高价
+        $singleFreezeAmount = (float)$zone['max_price'];
+        if ($singleFreezeAmount <= 0) {
             // 如果max_price为空或0（如开放区），使用min_price + 500
-            $freezeAmount = (float)$zone['min_price'] + 500;
+            $singleFreezeAmount = (float)$zone['min_price'] + 500;
         }
+        
+        // 计算总需求（单个 * 数量）
+        $totalHashrate = $singleHashrate * $quantity;
+        $totalFreezeAmount = $singleFreezeAmount * $quantity;
         
         $now = time();
 
@@ -704,106 +722,137 @@ class CollectionItem extends Frontend
                 throw new \Exception('用户不存在');
             }
 
-            // 检查绿色算力
+            // 检查绿色算力（总需求）
             $userGreenPower = (float)($user['green_power'] ?? 0);
             if ($userGreenPower < $totalHashrate) {
-                throw new \Exception('绿色算力不足，请先兑换');
+                throw new \Exception(sprintf('绿色算力不足，需要%.2f点（单个%.2f×%d），当前%.2f点', 
+                    $totalHashrate, $singleHashrate, $quantity, $userGreenPower));
             }
 
-            // 供应链专项金使用用户可用余额（专项金）
+            // 检查供应链专项金（总需求）
             $userAvailable = (float)($user['balance_available'] ?? 0);
-            if ($userAvailable < $freezeAmount) {
-                throw new \Exception('供应链专项金不足，需要' . $freezeAmount . '元');
+            if ($userAvailable < $totalFreezeAmount) {
+                throw new \Exception(sprintf('供应链专项金不足，需要%.2f元（单个%.2f×%d），当前%.2f元', 
+                    $totalFreezeAmount, $singleFreezeAmount, $quantity, $userAvailable));
             }
 
-            // 扣除算力（直接销毁）
+            // 一次性扣除总算力
             Db::name('user')->where('id', $userId)->dec('green_power', $totalHashrate)->update(['update_time' => $now]);
 
-            // 扣除专项资金（只扣除 balance_available，money 是派生值会自动计算）
+            // 一次性扣除总专项资金
             $beforeBalance = (float)($user['balance_available'] ?? 0);
-            $afterBalance = round($beforeBalance - $freezeAmount, 2);
+            $afterBalance = round($beforeBalance - $totalFreezeAmount, 2);
             
             Db::name('user')->where('id', $userId)->update([
                 'balance_available' => $afterBalance,
                 'update_time' => $now,
             ]);
             
-            // 插入预约记录（盲盒模式：zone_id有值，product_id=0）
-            $reservationId = Db::name('trade_reservations')->insertGetId([
-                'user_id' => $userId,
-                'session_id' => $sessionId,
-                'zone_id' => $zoneId,
-                'package_id' => $packageId,  // 资产包ID（用于撮合时匹配）
-                'product_id' => 0,  // 盲盒模式，预约时不知道具体商品
-                'freeze_amount' => $freezeAmount,
-                'power_used' => $totalHashrate,
-                'base_hashrate_cost' => $baseCost,
-                'extra_hashrate_cost' => $extraHashrate,
-                'weight' => $finalWeight,
-                'status' => 0,  // 待撮合
-                'match_order_id' => 0,
-                'match_time' => null,
-                'create_time' => $now,
-                'update_time' => $now,
-            ]);
+            // 批次号（所有预约记录共用，使用时间戳确保唯一性）
+            $mainBatchNo = generateBatchNo('BLIND_BOX_RESERVE_BATCH', (int)time());
+            $reservationIds = [];
+            
+            // 循环创建多个预约记录
+            for ($i = 1; $i <= $quantity; $i++) {
+                $reservationId = Db::name('trade_reservations')->insertGetId([
+                    'user_id' => $userId,
+                    'session_id' => $sessionId,
+                    'zone_id' => $zoneId,
+                    'package_id' => $packageId,
+                    'product_id' => 0,  // 盲盒模式
+                    'freeze_amount' => $singleFreezeAmount,
+                    'power_used' => $singleHashrate,
+                    'base_hashrate_cost' => $baseCost,
+                    'extra_hashrate_cost' => $extraHashrate,
+                    'weight' => $finalWeight,
+                    'status' => 0,  // 待撮合
+                    'match_order_id' => 0,
+                    'match_time' => null,
+                    'create_time' => $now,
+                    'update_time' => $now,
+                ]);
+                
+                $reservationIds[] = $reservationId;
+            }
 
-            // 记录可用余额变动（在创建预约记录后，可以关联reservation_id）
+            // 记录总的余额变动流水（一条记录）
             $flowNo = generateSJSFlowNo($userId);
-            $batchNo = generateBatchNo('BLIND_BOX_RESERVE', $reservationId);
             Db::name('user_money_log')->insert([
                 'user_id' => $userId,
                 'flow_no' => $flowNo,
-                'batch_no' => $batchNo,
+                'batch_no' => $mainBatchNo,
                 'biz_type' => 'blind_box_reserve',
-                'biz_id' => $reservationId,
+                'biz_id' => $reservationIds[0],  // 关联第一个预约ID
                 'field_type' => 'balance_available',
-                'money' => -$freezeAmount,
+                'money' => -$totalFreezeAmount,
                 'before' => $beforeBalance,
                 'after' => $afterBalance,
-                'memo' => '盲盒预约冻结可用余额 - ' . $zone['name'],
+                'memo' => sprintf('盲盒预约冻结可用余额 - %s (数量:%d)', $zone['name'], $quantity),
                 'create_time' => $now,
             ]);
 
-            // 🆕 记录算力扣除流水
+            // 记录总的算力扣除流水（一条记录）
             Db::name('user_money_log')->insert([
                 'user_id' => $userId,
-                'flow_no' => generateSJSFlowNo($userId), // 生成新的流水号
-                'batch_no' => $batchNo, // 使用相同的批次号
+                'flow_no' => generateSJSFlowNo($userId),
+                'batch_no' => $mainBatchNo,
                 'biz_type' => 'blind_box_reserve',
-                'biz_id' => $reservationId,
+                'biz_id' => $reservationIds[0],
                 'field_type' => 'green_power',
                 'money' => -$totalHashrate,
                 'before' => $userGreenPower,
                 'after' => $userGreenPower - $totalHashrate,
-                'memo' => '盲盒预约消耗绿色算力 - ' . $zone['name'],
+                'memo' => sprintf('盲盒预约消耗绿色算力 - %s (数量:%d)', $zone['name'], $quantity),
                 'create_time' => $now,
             ]);
 
-            // 记录活动日志（算力与冻结）
+            // 记录活动日志
             Db::name('user_activity_log')->insert([
                 'user_id' => $userId,
                 'action_type' => 'blind_box_reserve',
                 'change_field' => 'green_power,freeze_amount',
-                'change_value' => json_encode(['green_power' => -$totalHashrate, 'freeze_amount' => -$freezeAmount], JSON_UNESCAPED_UNICODE),
-                'before_value' => json_encode(['green_power' => $userGreenPower, 'available_money' => $userAvailable], JSON_UNESCAPED_UNICODE),
-                'after_value' => json_encode(['green_power' => $userGreenPower - $totalHashrate, 'available_money' => $userAvailable - $freezeAmount], JSON_UNESCAPED_UNICODE),
-                'remark' => sprintf('盲盒预约 %s 场次#%d，算力消耗%.2f，冻结金额%.2f', $zone['name'], $sessionId, $totalHashrate, $freezeAmount),
-                'extra' => json_encode(['session_id' => $sessionId, 'zone_id' => $zoneId, 'zone_name' => $zone['name'], 'reservation_id' => $reservationId], JSON_UNESCAPED_UNICODE),
+                'change_value' => json_encode([
+                    'green_power' => -$totalHashrate, 
+                    'freeze_amount' => -$totalFreezeAmount,
+                    'quantity' => $quantity
+                ], JSON_UNESCAPED_UNICODE),
+                'before_value' => json_encode([
+                    'green_power' => $userGreenPower, 
+                    'available_money' => $userAvailable
+                ], JSON_UNESCAPED_UNICODE),
+                'after_value' => json_encode([
+                    'green_power' => $userGreenPower - $totalHashrate, 
+                    'available_money' => $userAvailable - $totalFreezeAmount
+                ], JSON_UNESCAPED_UNICODE),
+                'remark' => sprintf('盲盒预约 %s 场次#%d，数量%d，总算力消耗%.2f，总冻结金额%.2f', 
+                    $zone['name'], $sessionId, $quantity, $totalHashrate, $totalFreezeAmount),
+                'extra' => json_encode([
+                    'session_id' => $sessionId, 
+                    'zone_id' => $zoneId, 
+                    'zone_name' => $zone['name'], 
+                    'reservation_ids' => $reservationIds,
+                    'quantity' => $quantity,
+                    'single_freeze_amount' => $singleFreezeAmount,
+                    'single_hashrate' => $singleHashrate
+                ], JSON_UNESCAPED_UNICODE),
                 'create_time' => $now,
             ]);
 
             Db::commit();
-            $this->success('盲盒预约成功！等待撮合结果', [
-                'reservation_id' => $reservationId,
-                'freeze_amount' => $freezeAmount,
-                'power_used' => $totalHashrate,
+            $this->success(sprintf('盲盒预约成功！已预约%d个，等待撮合结果', $quantity), [
+                'reservation_ids' => $reservationIds,
+                'quantity' => $quantity,
+                'total_freeze_amount' => $totalFreezeAmount,
+                'total_power_used' => $totalHashrate,
+                'single_freeze_amount' => $singleFreezeAmount,
+                'single_power_used' => $singleHashrate,
                 'weight' => $finalWeight,
                 'zone_id' => $zoneId,
                 'zone_name' => $zone['name'],
                 'session_id' => $sessionId,
                 'package_id' => $packageId,
                 'package_name' => $package['name'] ?? '',
-                'message' => '预约并冻结成功，等待撮合。中签后将匹配' . $zone['name'] . '内商品。',
+                'message' => sprintf('预约并冻结成功，已创建%d个预约记录，等待撮合。中签后将匹配%s内商品。', $quantity, $zone['name']),
             ]);
         } catch (HttpResponseException $e) {
             Db::rollback();
@@ -3671,7 +3720,7 @@ class CollectionItem extends Frontend
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
         Apidoc\Query(name: "page", type: "int", require: false, desc: "页码", default: "1"),
         Apidoc\Query(name: "limit", type: "int", require: false, desc: "每页数量", default: "10"),
-        Apidoc\Query(name: "status", type: "string", require: false, desc: "状态筛选: all=全部(返回全部状态), holding=待寄售/持有中(默认), consigned=寄售中, failed=寄售失败, sold=已售出"),
+        Apidoc\Query(name: "status", type: "string", require: false, desc: "状态筛选: all=全部(返回全部状态), holding=待寄售/持有中(默认), consigned=寄售中, mining=矿机中, failed=寄售失败, sold=已售出"),
 
         Apidoc\Returned("list[].id", type: "int", desc: "用户藏品ID"),
         Apidoc\Returned("list[].unique_id", type: "string", desc: "唯一标识ID"),
@@ -3789,11 +3838,14 @@ class CollectionItem extends Frontend
             } elseif ($status === 'consigned') {
                 // 寄售中
                 $query->where('uc.consignment_status', 1);
+            } elseif ($status === 'mining') {
+                // 矿机中：矿机状态的藏品
+                $query->where('uc.mining_status', 1);
             } elseif ($status === 'all') {
-                // all 状态：包含持有中、寄售中，但不包含已售出（已售出单独查询）
+                // all 状态：包含持有中、寄售中、矿机中，但不包含已售出（已售出单独查询）
                 $query->where('uc.consignment_status', '<>', 2)
-                      ->where('uc.delivery_status', 0)
-                      ->where('uc.mining_status', '<>', 1); // 非矿机状态
+                      ->where('uc.delivery_status', 0);
+                // 注意：all 状态现在包含矿机，不再排除 mining_status
             }
 
             $list = $query
