@@ -748,8 +748,8 @@ class CollectionItem extends Frontend
                 'update_time' => $now,
             ]);
             
-            // 批次号（所有预约记录共用）
-            $mainBatchNo = generateBatchNo('BLIND_BOX_RESERVE_BATCH', $userId . '_' . time());
+            // 批次号（所有预约记录共用，使用时间戳确保唯一性）
+            $mainBatchNo = generateBatchNo('BLIND_BOX_RESERVE_BATCH', (int)time());
             $reservationIds = [];
             
             // 循环创建多个预约记录
