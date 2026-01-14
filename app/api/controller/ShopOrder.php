@@ -503,7 +503,6 @@ class ShopOrder extends Frontend
                 ->where('id', $orderId)
                 ->update([
                     'status' => $orderStatus,
-                    'balance_available_amount' => $payMoney,
                     'pay_time' => time(),
                     'complete_time' => $completeTime,
                     'update_time' => time(),
