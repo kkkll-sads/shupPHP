@@ -37,6 +37,8 @@
                             <el-option label="支付宝" value="alipay" />
                             <el-option label="微信" value="wechat" />
                             <el-option label="USDT" value="usdt" />
+                            <el-option label="数字人民币" value="digital_rmb" />
+                            <el-option label="银联快捷" value="unionpay" />
                         </el-select>
                     </el-form-item>
                     <el-form-item prop="account_name" label="账户名">
