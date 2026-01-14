@@ -40,11 +40,15 @@ class TradeHall extends Backend
         // 统计寄售数据（按场次+资产包+分区）
         $consignmentStats = $this->getConsignmentStats($sessionId);
         
+        // ✨ 计算汇总统计数据（当前场次）
+        $summaryStats = $this->calculateSummaryStats($sessionId, $reservationStats, $consignmentStats);
+        
         $this->success('', [
             'session_id' => $sessionId,
             'sessions' => $sessions,
             'reservation_stats' => $reservationStats,
             'consignment_stats' => $consignmentStats,
+            'summary_stats' => $summaryStats, // ✨ 汇总统计数据
             'remark' => get_route_remark(),
         ]);
     }
@@ -102,24 +106,70 @@ class TradeHall extends Backend
                 ->sum('stock');
             $officialStock = (int)($officialStock ?? 0);
             
-            // 2. 寄售数量：在售的寄售记录（属于该资产包+分区）
-            $consignmentCount = Db::name('collection_consignment')
+            // 2. 寄售统计：在售的寄售记录（属于该资产包+分区）
+            $consignmentData = Db::name('collection_consignment')
                 ->alias('cc')
                 ->leftJoin('collection_item ci', 'cc.item_id = ci.id')
                 ->where('cc.status', 1) // 在售
                 ->where('cc.session_id', $item['session_id'])
                 ->where('cc.package_id', $item['package_id'])
                 ->where('cc.zone_id', $item['zone_id'])
-                ->count();
-            $consignmentCount = (int)$consignmentCount;
+                ->field('COUNT(*) as count, SUM(cc.price) as total_price')
+                ->find();
+            
+            $consignmentCount = (int)($consignmentData['count'] ?? 0);
+            $consignmentTotalPrice = round((float)($consignmentData['total_price'] ?? 0), 2);
             
             // 总可用数量 = 官方库存 + 寄售数量
             $item['item_count'] = $officialStock + $consignmentCount;
             $item['official_stock'] = $officialStock; // 额外提供官方库存
             $item['consignment_stock'] = $consignmentCount; // 额外提供寄售库存
+            $item['consignment_count'] = $consignmentCount; // ✨ 在售数量
+            $item['consignment_total_price'] = $consignmentTotalPrice; // ✨ 在售金额
         }
         
         return $stats;
+    }
+    
+    /**
+     * 计算汇总统计数据
+     * @param int $sessionId 场次ID
+     * @param array $reservationStats 预约统计数据
+     * @param array $consignmentStats 寄售统计数据
+     * @return array
+     */
+    private function calculateSummaryStats(int $sessionId, array $reservationStats, array $consignmentStats): array
+    {
+        // 从预约统计数据计算汇总
+        $totalReservationCount = 0; // 预约总数
+        $totalFreezeAmount = 0; // 预约冻结总额
+        $totalConsignmentCount = 0; // 在售数量总额（从预约统计中获取）
+        $totalConsignmentPrice = 0; // 在售金额总额（从预约统计中获取）
+        
+        foreach ($reservationStats as $item) {
+            $totalReservationCount += (int)($item['reservation_count'] ?? 0);
+            $totalFreezeAmount += (float)($item['total_freeze_amount'] ?? 0);
+            $totalConsignmentCount += (int)($item['consignment_count'] ?? 0);
+            $totalConsignmentPrice += (float)($item['consignment_total_price'] ?? 0);
+        }
+        
+        // 从寄售统计数据计算汇总（用于验证）
+        $totalConsignmentCountFromSale = 0;
+        $totalConsignmentPriceFromSale = 0;
+        
+        foreach ($consignmentStats as $item) {
+            $totalConsignmentCountFromSale += (int)($item['consignment_count'] ?? 0);
+            $totalConsignmentPriceFromSale += (float)($item['total_price'] ?? 0);
+        }
+        
+        return [
+            'reservation_count' => $totalReservationCount, // 预约总数
+            'freeze_amount' => round($totalFreezeAmount, 2), // 预约冻结总额
+            'consignment_count' => $totalConsignmentCount, // 在售数量总额
+            'consignment_total_price' => round($totalConsignmentPrice, 2), // 在售金额总额
+            'consignment_count_from_sale' => $totalConsignmentCountFromSale, // 从寄售统计获取的在售总数（验证用）
+            'consignment_price_from_sale' => round($totalConsignmentPriceFromSale, 2), // 从寄售统计获取的在售总价（验证用）
+        ];
     }
     
     /**
