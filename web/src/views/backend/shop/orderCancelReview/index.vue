@@ -128,7 +128,7 @@
 import { reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import baTableClass from '/@/utils/baTable'
-import baTableApi from '/@/api/common'
+import { baTableApi } from '/@/api/common'
 import { useI18n } from 'vue-i18n'
 import { defaultOptButtons } from '/@/components/table'
 import TableHeader from '/@/components/table/header/index.vue'
