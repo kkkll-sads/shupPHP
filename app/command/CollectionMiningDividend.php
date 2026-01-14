@@ -9,7 +9,7 @@ use think\facade\Db;
 
 /**
  * 矿机每日分红定时任务
- * 用于自动发放矿机每日分红（一半余额，一半积分）
+ * 用于自动发放矿机每日分红（一半余额，一半消费金）
  * 
  * 使用方法：
  * php think collection:mining:dividend
@@ -147,7 +147,7 @@ class CollectionMiningDividend extends Command
                         $dividendToBalance = round($actualDividendAmount * $dividendBalanceRate, 2);
                         $dividendToScore = (int)round($actualDividendAmount * $dividendScoreRate);
 
-                        // 更新用户余额和积分（分红收益进入withdrawable_money可提现余额）
+                        // 更新用户余额和消费金（分红收益进入withdrawable_money可提现余额）
                         $beforeWithdrawable = (float)$user['withdrawable_money'];
                         $beforeScore = (float)$user['score'];
                         $afterWithdrawable = $beforeWithdrawable + $dividendToBalance;
@@ -187,7 +187,7 @@ class CollectionMiningDividend extends Command
                                 'score' => $dividendToScore,
                                 'before' => $beforeScore,
                                 'after' => $afterScore,
-                                'memo' => '矿机每日分红（积分）：' . $collection['title'],
+                                'memo' => '矿机每日分红（消费金）：' . $collection['title'],
                                 'create_time' => $now,
                             ]);
                         }
@@ -210,7 +210,7 @@ class CollectionMiningDividend extends Command
                                 'withdrawable_money' => $afterWithdrawable,
                                 'score' => $afterScore,
                             ]),
-                            'remark' => '矿机每日分红：' . $collection['title'] . '（可提现余额：' . number_format($dividendToBalance, 2) . '元，积分：' . $dividendToScore . '分）',
+                            'remark' => '矿机每日分红：' . $collection['title'] . '（可提现余额：' . number_format($dividendToBalance, 2) . '元，消费金：' . $dividendToScore . '分）',
                             'extra' => json_encode([
                                 'user_collection_id' => $collection['id'],
                                 'item_id' => $collection['item_id'],
@@ -232,9 +232,9 @@ class CollectionMiningDividend extends Command
                         $successCount++;
                         
                         if ($dividendPriceRate > 0) {
-                            $output->writeln("✓ 矿机 ID:{$collection['id']} 分红发放成功，用户ID：{$collection['user_id']}，藏品价格：{$collection['price']}元，分红：{$actualDividendAmount}元（余额：{$dividendToBalance}元，积分：{$dividendToScore}分）");
+                            $output->writeln("✓ 矿机 ID:{$collection['id']} 分红发放成功，用户ID：{$collection['user_id']}，藏品价格：{$collection['price']}元，分红：{$actualDividendAmount}元（余额：{$dividendToBalance}元，消费金：{$dividendToScore}分）");
                         } else {
-                            $output->writeln("✓ 矿机 ID:{$collection['id']} 分红发放成功，用户ID：{$collection['user_id']}，余额：{$dividendToBalance}元，积分：{$dividendToScore}分");
+                            $output->writeln("✓ 矿机 ID:{$collection['id']} 分红发放成功，用户ID：{$collection['user_id']}，余额：{$dividendToBalance}元，消费金：{$dividendToScore}分");
                         }
 
                     } catch (\Exception $e) {

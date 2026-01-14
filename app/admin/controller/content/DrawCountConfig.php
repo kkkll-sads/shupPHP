@@ -931,7 +931,7 @@ class DrawCountConfig extends Backend
                         ];
                         $tipMap = [
                             'consignment_profit_balance' => '交易结算时，利润中分配给余额的比例（0-1之间，例如0.5表示50%）',
-                            'consignment_profit_score' => '交易结算时，利润中分配给积分的比例（0-1之间，例如0.5表示50%）',
+                            'consignment_profit_score' => '交易结算时，利润中分配给消费金的比例（0-1之间，例如0.5表示50%）',
                         ];
                         \think\facade\Db::name('config')->insert([
                             'name' => $name,
@@ -1086,11 +1086,11 @@ class DrawCountConfig extends Backend
                     $this->error('分红余额分配比例必须在0-1之间');
                 }
                 if ($dividendScoreRate < 0 || $dividendScoreRate > 1) {
-                    $this->error('分红积分分配比例必须在0-1之间');
+                    $this->error('分红消费金分配比例必须在0-1之间');
                 }
                 $totalRate = $dividendBalanceRate + $dividendScoreRate;
                 if (abs($totalRate - 1.0) > 0.0001) {
-                    $this->error('分红余额分配比例和分红积分分配比例之和必须等于1（100%）');
+                    $this->error('分红余额分配比例和分红消费金分配比例之和必须等于1（100%）');
                 }
                 if ($dailyDividendAmount < 0) {
                     $this->error('每日分红金额必须为非负数');
@@ -1120,7 +1120,7 @@ class DrawCountConfig extends Backend
                             'mining_long_term_days' => '长期滞销天数',
                             'mining_price_top_multiple' => '价格触顶倍数',
                             'mining_dividend_balance' => '分红余额分配比例',
-                            'mining_dividend_score' => '分红积分分配比例',
+                            'mining_dividend_score' => '分红消费金分配比例',
                             'mining_daily_dividend' => '每日分红金额',
                             'mining_dividend_price_rate' => '分红价格比例',
                         ];
@@ -1129,7 +1129,7 @@ class DrawCountConfig extends Backend
                             'mining_long_term_days' => '持有超过此天数还没卖掉（或没操作上架）时，触发强制锁仓转为矿机',
                             'mining_price_top_multiple' => '现价超过发行价的此倍数时，触发强制锁仓转为矿机',
                             'mining_dividend_balance' => '矿机每日分红中分配给余额的比例（0-1之间，例如0.5表示50%）',
-                            'mining_dividend_score' => '矿机每日分红中分配给积分的比例（0-1之间，例如0.5表示50%）',
+                            'mining_dividend_score' => '矿机每日分红中分配给消费金的比例（0-1之间，例如0.5表示50%）',
                             'mining_daily_dividend' => '矿机每日分红总金额（元），当价格比例为0时使用此固定金额',
                             'mining_dividend_price_rate' => '按藏品当前价格的比例计算分红（0-1之间，例如0.01表示1%；设置为0则使用固定金额分红）',
                         ];
@@ -1985,6 +1985,89 @@ class DrawCountConfig extends Backend
                 $this->success('', [
                     'power_base' => $powerBase !== null && $powerBase !== '' ? (float)$powerBase : 0,
                     'weight_base' => $weightBase !== null && $weightBase !== '' ? (float)$weightBase : 0,
+                ]);
+            }
+        } catch (HttpResponseException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            $this->error($e->getMessage());
+        }
+    }
+
+    /**
+     * 获取/保存直播视频配置
+     * @throws Throwable
+     */
+    public function liveVideoConfig(): void
+    {
+        try {
+            if ($this->request->isPost()) {
+                $videoUrl = (string)$this->request->post('video_url', '');
+                $title = (string)$this->request->post('title', '');
+                $description = (string)$this->request->post('description', '');
+
+                // 验证数据
+                if (empty($videoUrl)) {
+                    $this->error('视频地址不能为空');
+                }
+
+                // 基本URL格式验证
+                if (!filter_var($videoUrl, FILTER_VALIDATE_URL)) {
+                    $this->error('请输入有效的视频地址URL');
+                }
+
+                // 检查是否为mp4格式（如果提供了后缀）
+                $pathInfo = pathinfo($videoUrl);
+                if (isset($pathInfo['extension']) && strtolower($pathInfo['extension']) !== 'mp4') {
+                    $this->error('目前只支持MP4格式的视频文件');
+                }
+
+                // 保存配置到系统配置表
+                $configs = [
+                    'live_video_url' => $videoUrl,
+                    'live_video_title' => $title,
+                    'live_video_description' => $description,
+                ];
+
+                foreach ($configs as $name => $value) {
+                    $existing = ConfigModel::where('name', $name)->field('id,name')->find();
+                    if ($existing) {
+                        ConfigModel::where('name', $name)->update(['value' => $value]);
+                    } else {
+                        $titles = [
+                            'live_video_url' => '直播视频地址',
+                            'live_video_title' => '直播视频标题',
+                            'live_video_description' => '直播视频描述',
+                        ];
+                        $tips = [
+                            'live_video_url' => '直播视频的MP4文件地址',
+                            'live_video_title' => '直播视频的标题显示',
+                            'live_video_description' => '直播视频的详细描述',
+                        ];
+                        \think\facade\Db::name('config')->insert([
+                            'name' => $name,
+                            'value' => $value,
+                            'title' => $titles[$name],
+                            'tip' => $tips[$name],
+                            'type' => 'string',
+                            'group' => 'live',
+                            'content' => '',
+                            'rule' => '',
+                            'extend' => '',
+                            'allow_del' => 1,
+                            'weigh' => 0,
+                        ]);
+                    }
+                }
+
+                Cache::tag(ConfigModel::$cacheTag)->clear();
+
+                $this->success('直播视频配置更新成功');
+            } else {
+                $this->success('', [
+                    'video_url' => (string)get_sys_config('live_video_url', ''),
+                    'title' => (string)get_sys_config('live_video_title', ''),
+                    'description' => (string)get_sys_config('live_video_description', ''),
                 ]);
             }
         } catch (HttpResponseException $e) {

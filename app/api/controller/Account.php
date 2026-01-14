@@ -1133,14 +1133,23 @@ class Account extends Frontend
             ->alias('a')
             ->where('a.user_id', $userId)
             // 只查询特定的奖励类型
+            // 注意：排除已经在 user_money_log 中记录的业务类型，避免重复显示
+            // 以下业务类型已经在 user_money_log 中完整记录，不应该再从 activity_log 中查询：
+            // - invite_reward (邀请奖励)
+            // - sign_in (签到奖励)
+            // - register_reward (注册奖励)
+            // - recharge_reward (充值奖励)
+            // - gift_hashrate (赠送算力)
+            // - compensation (补偿)
+            // - score_exchange_green_power (积分兑换算力)
+            // - balance_transfer (余额转账)
+            // - old_assets_unlock (旧资产解锁)
+            // - service_fee_recharge (服务费充值)
             ->whereIn('a.action_type', [
-                'first_trade_reward',
-                'questionnaire_reward',
-                'invite_reward',
-                'agent_commission',
-                'register_reward',
-                'sign_in',
-                'sign_in_referral'
+                'first_trade_reward',        // 首次交易奖励(只在activity_log中)
+                'questionnaire_reward',      // 问卷奖励(只在activity_log中)
+                'subordinate_first_trade_reward',  // 下级首次交易奖励(只在activity_log中)
+                // agent_commission 不在列表中，因为实际使用 agent_direct_commission 和 agent_indirect_commission
             ])
             ->field([
                 'id',

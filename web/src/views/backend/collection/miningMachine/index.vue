@@ -35,7 +35,7 @@
             </el-col>
             <el-col :span="6">
                 <el-card shadow="hover" class="dividend-card">
-                    <el-statistic title="今日分红(积分)" :value="statistics.today_dividend_score" value-style="color: #e6a23c" />
+                    <el-statistic title="今日分红(消费金)" :value="statistics.today_dividend_score" value-style="color: #e6a23c" />
                 </el-card>
             </el-col>
             <el-col :span="6">
@@ -45,7 +45,7 @@
             </el-col>
             <el-col :span="6">
                 <el-card shadow="hover" class="dividend-card">
-                    <el-statistic title="累计分红(积分)" :value="statistics.total_dividend_score" value-style="color: #909399" />
+                    <el-statistic title="累计分红(消费金)" :value="statistics.total_dividend_score" value-style="color: #909399" />
                 </el-card>
             </el-col>
         </el-row>
@@ -63,7 +63,7 @@
                         <span style="color: #67c23a; font-weight: bold;">¥{{ row.balance }}</span>
                     </template>
                 </el-table-column>
-                <el-table-column prop="score" label="积分分红" align="center">
+                <el-table-column prop="score" label="消费金分红" align="center">
                     <template #default="{ row }">
                         <span style="color: #e6a23c;">{{ row.score }}</span>
                     </template>
