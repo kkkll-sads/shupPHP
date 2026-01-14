@@ -172,7 +172,7 @@ class Recharge extends Frontend
         if (empty($paymentType)) {
             $this->error('支付方式不能为空');
         }
-        if (!in_array($paymentType, ['bank_card', 'alipay', 'wechat', 'usdt'])) {
+        if (!in_array($paymentType, ['bank_card', 'alipay', 'wechat', 'usdt', 'digital_rmb', 'unionpay'])) {
             $this->error('支付方式不正确');
         }
         if (!$companyAccountId) {
@@ -559,7 +559,7 @@ class Recharge extends Frontend
             if ($account['account_type'] === 'company' && (int)$account['audit_status'] !== 1) {
                 $this->error('该账户尚未通过审核，无法提现');
             }
-            if (!in_array($account['type'], ['bank_card', 'alipay', 'wechat', 'usdt'])) {
+            if (!in_array($account['type'], ['bank_card', 'alipay', 'wechat', 'usdt', 'digital_rmb', 'unionpay'])) {
                 $this->error('不支持的提现账户类型');
             }
 
@@ -785,7 +785,7 @@ class Recharge extends Frontend
             if ($account['account_type'] === 'company' && (int)$account['audit_status'] !== 1) {
                 $this->error('该账户尚未通过审核，无法提现');
             }
-            if (!in_array($account['type'], ['bank_card', 'alipay', 'wechat', 'usdt'])) {
+            if (!in_array($account['type'], ['bank_card', 'alipay', 'wechat', 'usdt', 'digital_rmb', 'unionpay'])) {
                 $this->error('不支持的提现账户类型');
             }
 
@@ -1131,7 +1131,7 @@ class Recharge extends Frontend
         Apidoc\Returned("data[].amount", type: "float", desc: "提现金额"),
         Apidoc\Returned("data[].fee", type: "float", desc: "手续费"),
         Apidoc\Returned("data[].actual_amount", type: "float", desc: "实际到账金额"),
-        Apidoc\Returned("data[].account_type", type: "string", desc: "账户类型:bank_card=银行卡,alipay=支付宝,wechat=微信,usdt=USDT"),
+        Apidoc\Returned("data[].account_type", type: "string", desc: "账户类型:bank_card=银行卡,alipay=支付宝,wechat=微信,usdt=USDT,digital_rmb=数字人民币,unionpay=银联快捷"),
         Apidoc\Returned("data[].account_type_text", type: "string", desc: "账户类型文本"),
         Apidoc\Returned("data[].account_name", type: "string", desc: "账户名称"),
         Apidoc\Returned("data[].account_number", type: "string", desc: "账户号码"),
