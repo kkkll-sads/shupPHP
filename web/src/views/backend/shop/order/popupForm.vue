@@ -31,13 +31,17 @@
                             <span v-if="baTable.form.items?.pay_type === 'money'">
                                 {{ Number(baTable.form.items?.total_amount).toFixed(2) }}元
                             </span>
+                            <span v-else-if="baTable.form.items?.pay_type === 'score'">
+                                {{ baTable.form.items?.total_score }}消费金
+                            </span>
                             <span v-else>
-                                {{ baTable.form.items?.total_score }}积分
+                                {{ Number(baTable.form.items?.total_amount).toFixed(2) }}元 + {{ baTable.form.items?.total_score }}消费金
                             </span>
                         </el-descriptions-item>
                         <el-descriptions-item label="支付方式">
                             <el-tag v-if="baTable.form.items?.pay_type === 'money'" type="success">余额支付</el-tag>
-                            <el-tag v-else type="warning">积分兑换</el-tag>
+                            <el-tag v-else-if="baTable.form.items?.pay_type === 'score'" type="warning">消费金支付</el-tag>
+                            <el-tag v-else type="info">组合支付</el-tag>
                         </el-descriptions-item>
                         <el-descriptions-item label="订单状态">
                             <el-tag :type="getStatusType(baTable.form.items?.status)">
@@ -107,8 +111,11 @@
                                 <span v-if="baTable.form.items?.pay_type === 'money'">
                                     {{ Number(scope.row.price).toFixed(2) }}元
                                 </span>
+                                <span v-else-if="baTable.form.items?.pay_type === 'score'">
+                                    {{ scope.row.score_price }}消费金
+                                </span>
                                 <span v-else>
-                                    {{ scope.row.score_price }}积分
+                                    {{ Number(scope.row.price).toFixed(2) }}元 + {{ scope.row.score_price }}消费金
                                 </span>
                             </template>
                         </el-table-column>
@@ -118,8 +125,11 @@
                                 <span v-if="baTable.form.items?.pay_type === 'money'">
                                     {{ Number(scope.row.subtotal).toFixed(2) }}元
                                 </span>
+                                <span v-else-if="baTable.form.items?.pay_type === 'score'">
+                                    {{ scope.row.subtotal_score }}消费金
+                                </span>
                                 <span v-else>
-                                    {{ scope.row.subtotal_score }}积分
+                                    {{ Number(scope.row.subtotal).toFixed(2) }}元 + {{ scope.row.subtotal_score }}消费金
                                 </span>
                             </template>
                         </el-table-column>

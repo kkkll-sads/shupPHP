@@ -141,25 +141,6 @@ class WithdrawReview extends Backend
 
         [$where, $alias, $limit, $order] = $this->queryBuilder();
 
-        // 处理快速搜索中的手机号
-        $quickSearch = $this->request->get('quickSearch/s', '');
-        $quickSearchMobile = '';
-        
-        // 如果快速搜索值看起来像手机号（11位数字），则作为手机号搜索
-        if ($quickSearch && preg_match('/^\d{11}$/', $quickSearch)) {
-            $quickSearchMobile = $quickSearch;
-            // 从 $where 中移除快速搜索条件（applicant_name 和 applicant_type）
-            foreach ($where as $k => $v) {
-                if (is_array($v) && isset($v[0]) && is_string($v[0])) {
-                    $fieldName = $v[0];
-                    // 移除 applicant_name 和 applicant_type 的快速搜索条件
-                    if (strpos($fieldName, 'applicant_name') !== false || strpos($fieldName, 'applicant_type') !== false) {
-                        unset($where[$k]);
-                    }
-                }
-            }
-        }
-
         // 自定义筛选：处理 payment_search 和所有计算字段
         // 计算字段列表：type_text, account_name, account_number, bank_name, applicant_mobile
         $paymentSearch = $this->request->param('payment_search', '');
@@ -167,7 +148,7 @@ class WithdrawReview extends Backend
         
         // 计算字段搜索值
         $typeTextSearch = '';
-        $applicantMobileSearch = $quickSearchMobile ?: ''; // 优先使用快速搜索的手机号
+        $applicantMobileSearch = '';
         $accountNameSearch = '';
         $accountNumberSearch = '';
         $bankNameSearch = '';
@@ -188,7 +169,7 @@ class WithdrawReview extends Backend
                 $typeTextSearch = $searchValue;
                 unset($searchArr[$idx]);
             } elseif ($fieldName === 'applicant_mobile') {
-                $applicantMobileSearch = $searchValue; // 通用搜索优先级更高
+                $applicantMobileSearch = $searchValue;
                 unset($searchArr[$idx]);
             } elseif ($fieldName === 'account_name') {
                 $accountNameSearch = $searchValue;

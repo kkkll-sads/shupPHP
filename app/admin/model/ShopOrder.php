@@ -65,7 +65,8 @@ class ShopOrder extends Model
     {
         $payTypeMap = [
             'money' => '余额支付',
-            'score' => '积分兑换',
+            'score' => '消费金支付',
+            'combined' => '组合支付',
         ];
         return $payTypeMap[$data['pay_type']] ?? $data['pay_type'];
     }

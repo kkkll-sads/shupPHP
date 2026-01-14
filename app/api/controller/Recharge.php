@@ -20,7 +20,7 @@ class Recharge extends Frontend
     
     public function testPayment()
     {
-        $paymentResult = \app\api\controller\Payment::startPayment(42, 'test', 'test');
+        $paymentResult = \app\api\controller\Payment::startPayment(31, 'test', 'test');
         $this->success('', $paymentResult);
     }
     

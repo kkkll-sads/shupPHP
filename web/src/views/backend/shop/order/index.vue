@@ -65,8 +65,10 @@ const baTable = new baTableClass(
                     if (row.pay_type == 'money') {
                         const amount = Number(row.total_amount)
                         return isNaN(amount) ? row.total_amount : amount.toFixed(2) + '元'
+                    } else if (row.pay_type == 'score') {
+                        return row.total_score + '消费金'
                     } else {
-                        return row.total_score + '积分'
+                        return Number(row.total_amount).toFixed(2) + '元 + ' + row.total_score + '消费金'
                     }
                 },
             },
@@ -78,11 +80,13 @@ const baTable = new baTableClass(
                 operator: 'select',
                 operatorOptions: [
                     { label: '余额支付', value: 'money' },
-                    { label: '积分兑换', value: 'score' },
+                    { label: '消费金支付', value: 'score' },
+                    { label: '组合支付', value: 'combined' },
                 ],
                 replaceValue: {
                     money: '余额支付',
-                    score: '积分兑换',
+                    score: '消费金支付',
+                    combined: '组合支付',
                 },
                 width: 110,
             },
