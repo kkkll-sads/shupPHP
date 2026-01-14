@@ -32,7 +32,7 @@ class Recharge extends Frontend
         Apidoc\Query(name:"usage", type: "string", require: false, desc: "使用场景: recharge=充值(默认), withdraw=提现, all=全部启用账户"),
         Apidoc\Returned("list", type: "array", desc: "账户列表"),
         Apidoc\Returned("list[].id", type: "int", desc: "账户ID"),
-        Apidoc\Returned("list[].type", type: "string", desc: "账户类型:bank_card=银行卡,alipay=支付宝,wechat=微信,usdt=USDT"),
+        Apidoc\Returned("list[].type", type: "string", desc: "账户类型:bank_card=银行卡,alipay=支付宝,wechat=微信,usdt=USDT,digital_rmb=数字人民币,unionpay=银联快捷"),
         Apidoc\Returned("list[].type_text", type: "string", desc: "账户类型文本"),
         Apidoc\Returned("list[].account_name", type: "string", desc: "账户名称"),
         Apidoc\Returned("list[].account_number", type: "string", desc: "账户号码"),
@@ -80,6 +80,8 @@ class Recharge extends Frontend
                 'alipay' => '支付宝',
                 'wechat' => '微信',
                 'usdt' => 'USDT',
+                'digital_rmb' => '数字人民币',
+                'unionpay' => '银联快捷',
             ];
             $item['type_text'] = $typeMap[$item['type']] ?? '未知';
             $item['status_text'] = $statusMap[(int)$item['status']] ?? '未知';
@@ -91,6 +93,8 @@ class Recharge extends Frontend
                     'alipay' => '/static/images/payment/alipay.png',
                     'wechat' => '/static/images/payment/wechat.png',
                     'usdt' => '/static/images/payment/usdt.png',
+                    'digital_rmb' => '/static/images/payment/digital_rmb.png',
+                    'unionpay' => '/static/images/payment/unionpay.png',
                 ];
                 $item['icon'] = $defaultIcons[$item['type']] ?? '';
             }
@@ -120,7 +124,7 @@ class Recharge extends Frontend
         Apidoc\Method("POST"),
         Apidoc\Url("/api/Recharge/submitOrder"),
         Apidoc\Param(name:"amount", type: "float", require: true, desc: "充值金额(元)", mock: "@float(10, 10000, 2)"),
-        Apidoc\Param(name:"payment_type", type: "string", require: true, desc: "支付方式:bank_card=银行卡,alipay=支付宝,wechat=微信,usdt=USDT"),
+        Apidoc\Param(name:"payment_type", type: "string", require: true, desc: "支付方式:bank_card=银行卡,alipay=支付宝,wechat=微信,usdt=USDT,digital_rmb=数字人民币,unionpay=银联快捷"),
         Apidoc\Param(name:"company_account_id", type: "int", require: true, desc: "公司收款账户ID"),
         Apidoc\Param(name:"payment_method", type: "string", require: false, desc: "支付方式:offline=离线支付(上传截图),online=线上支付(默认:offline)", mock: "offline"),
         Apidoc\Param(name:"payment_screenshot", type: "file", require: false, desc: "付款截图文件(支持jpg/png/gif格式)，离线支付时与payment_screenshot_id或payment_screenshot_url二选一"),
