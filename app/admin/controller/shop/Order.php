@@ -58,6 +58,15 @@ class Order extends Backend
                     ['value' => 'combined', 'label' => '组合支付'],
                 ];
                 break;
+                
+            case 'product_type':
+                $options = [
+                    ['value' => 'physical', 'label' => '实物商品'],
+                    ['value' => 'virtual', 'label' => '虚拟商品'],
+                    ['value' => 'card', 'label' => '卡密商品'],
+                    ['value' => 'mixed', 'label' => '混合订单'],
+                ];
+                break;
         }
         
         $this->success('', [
@@ -75,13 +84,47 @@ class Order extends Backend
         }
 
         [$where, $alias, $limit, $order] = $this->queryBuilder('id desc');
-
-        $res = $this->model
+        
+        // 特殊处理：product_type 是虚拟字段，需要通过子查询实现
+        $productTypeFilter = $this->request->get('search/a', []);
+        $productTypeValue = null;
+        
+        // 从搜索参数中提取 product_type 筛选，并从 where 条件中移除
+        $filteredWhere = [];
+        foreach ($where as $condition) {
+            if (isset($condition[0]) && str_contains($condition[0], 'product_type')) {
+                $productTypeValue = $condition[2] ?? null;
+            } else {
+                $filteredWhere[] = $condition;
+            }
+        }
+        $where = $filteredWhere;
+        
+        // 构建查询
+        $query = $this->model
             ->alias($alias)
             ->where($where)
             ->with(['user', 'items'])
-            ->order($order)
-            ->paginate($limit);
+            ->order($order);
+        
+        // 如果有 product_type 筛选，需要通过子查询过滤
+        if ($productTypeValue) {
+            $orderIds = $this->getOrderIdsByProductType($productTypeValue);
+            if ($orderIds === false) {
+                // 没有匹配的订单
+                $this->success('', [
+                    'list' => [],
+                    'total' => 0,
+                    'remark' => get_route_remark(),
+                ]);
+                return;
+            }
+            if (!empty($orderIds)) {
+                $query->whereIn($alias . '.id', $orderIds);
+            }
+        }
+
+        $res = $query->paginate($limit);
 
         $list = $res->items();
         foreach ($list as &$item) {
@@ -531,6 +574,83 @@ class Order extends Backend
     public function del(): void
     {
         $this->error('订单不能删除，只能取消');
+    }
+    
+    /**
+     * 根据商品类型获取订单ID列表
+     * @param string $productType 商品类型：physical-实物，virtual-虚拟，card-卡密，mixed-混合
+     * @return array|false 返回订单ID数组，如果没有匹配返回false
+     */
+    private function getOrderIdsByProductType(string $productType): array|false
+    {
+        $matchedOrderIds = [];
+        
+        // 使用SQL子查询优化性能
+        switch ($productType) {
+            case 'physical':
+                // 纯实物商品订单：所有商品的is_physical=1
+                $sql = "SELECT DISTINCT o.id 
+                        FROM ba_shop_order o
+                        INNER JOIN ba_shop_order_item oi ON o.id = oi.order_id
+                        INNER JOIN ba_shop_product p ON oi.product_id = p.id
+                        WHERE p.is_physical = '1'
+                        AND NOT EXISTS (
+                            SELECT 1 FROM ba_shop_order_item oi2
+                            INNER JOIN ba_shop_product p2 ON oi2.product_id = p2.id
+                            WHERE oi2.order_id = o.id AND p2.is_physical = '0'
+                        )";
+                $matchedOrderIds = Db::query($sql);
+                break;
+                
+            case 'virtual':
+                // 纯虚拟商品订单：所有商品的is_physical=0且不是卡密商品
+                $sql = "SELECT DISTINCT o.id 
+                        FROM ba_shop_order o
+                        INNER JOIN ba_shop_order_item oi ON o.id = oi.order_id
+                        INNER JOIN ba_shop_product p ON oi.product_id = p.id
+                        WHERE p.is_physical = '0' AND (p.is_card_product = '0' OR p.is_card_product IS NULL)
+                        AND NOT EXISTS (
+                            SELECT 1 FROM ba_shop_order_item oi2
+                            INNER JOIN ba_shop_product p2 ON oi2.product_id = p2.id
+                            WHERE oi2.order_id = o.id AND (p2.is_physical = '1' OR p2.is_card_product = '1')
+                        )";
+                $matchedOrderIds = Db::query($sql);
+                break;
+                
+            case 'card':
+                // 卡密商品订单：至少有一个is_card_product=1的商品
+                $sql = "SELECT DISTINCT o.id 
+                        FROM ba_shop_order o
+                        INNER JOIN ba_shop_order_item oi ON o.id = oi.order_id
+                        INNER JOIN ba_shop_product p ON oi.product_id = p.id
+                        WHERE p.is_card_product = '1'";
+                $matchedOrderIds = Db::query($sql);
+                break;
+                
+            case 'mixed':
+                // 混合订单：既有实物商品又有虚拟商品
+                $sql = "SELECT DISTINCT o.id 
+                        FROM ba_shop_order o
+                        WHERE EXISTS (
+                            SELECT 1 FROM ba_shop_order_item oi
+                            INNER JOIN ba_shop_product p ON oi.product_id = p.id
+                            WHERE oi.order_id = o.id AND p.is_physical = '1'
+                        )
+                        AND EXISTS (
+                            SELECT 1 FROM ba_shop_order_item oi2
+                            INNER JOIN ba_shop_product p2 ON oi2.product_id = p2.id
+                            WHERE oi2.order_id = o.id AND p2.is_physical = '0'
+                        )";
+                $matchedOrderIds = Db::query($sql);
+                break;
+        }
+        
+        if (empty($matchedOrderIds)) {
+            return false;
+        }
+        
+        // 提取ID
+        return array_column($matchedOrderIds, 'id');
     }
 }
 
