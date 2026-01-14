@@ -400,12 +400,13 @@ class Backend extends Api
     protected function getOperatorByAlias(string $operator): string
     {
         $alias = [
-            'ne'  => '<>',
-            'eq'  => '=',
-            'gt'  => '>',
-            'egt' => '>=',
-            'lt'  => '<',
-            'elt' => '<=',
+            'ne'     => '<>',
+            'eq'     => '=',
+            'gt'     => '>',
+            'egt'    => '>=',
+            'lt'     => '<',
+            'elt'    => '<=',
+            'select' => '=',  // select下拉搜索使用等于操作符
         ];
 
         return $alias[$operator] ?? $operator;
