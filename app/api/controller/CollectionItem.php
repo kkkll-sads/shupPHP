@@ -2447,13 +2447,741 @@ class CollectionItem extends Frontend
     }
 
     #[
-        Apidoc\Title("检查寄售解锁状态"),
+        Apidoc\Title("批量寄售"),
+        Apidoc\Tag("藏品商城,寄售"),
+        Apidoc\Method("POST"),
+        Apidoc\Url("/api/collectionItem/batchConsign"),
+        Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
+        Apidoc\Param(name: "consignments", type: "array", require: true, desc: "寄售列表，格式：[{\"user_collection_id\": 123, \"price\": 100.00}, ...]"),
+        Apidoc\Param(name: "consignments[].user_collection_id", type: "int", require: true, desc: "用户藏品记录ID"),
+        Apidoc\Param(name: "consignments[].price", type: "float", require: false, desc: "寄售价格(可忽略，默认使用原价)"),
+        Apidoc\Returned("total_count", type: "int", desc: "总寄售数量"),
+        Apidoc\Returned("success_count", type: "int", desc: "成功数量"),
+        Apidoc\Returned("failure_count", type: "int", desc: "失败数量"),
+        Apidoc\Returned("results", type: "array", desc: "详细结果列表"),
+        Apidoc\Returned("results[].user_collection_id", type: "int", desc: "用户藏品ID"),
+        Apidoc\Returned("results[].success", type: "bool", desc: "是否成功"),
+        Apidoc\Returned("results[].message", type: "string", desc: "结果消息"),
+        Apidoc\Returned("results[].data", type: "object", desc: "成功时的数据，与单次寄售返回格式相同"),
+    ]
+    public function batchConsign(): void
+    {
+        if (!$this->auth->isLogin()) {
+            $this->error('请先登录', [], 401);
+        }
+
+        $userId = $this->auth->id;
+        $consignments = $this->request->param('consignments/a', []);
+
+        // 1. 参数验证
+        if (empty($consignments) || !is_array($consignments)) {
+            $this->error('参数错误：consignments必须是非空数组');
+        }
+
+        $maxBatchSize = 1000; // 最大批量处理数量
+        if (count($consignments) > $maxBatchSize) {
+            $this->error("批量寄售数量不能超过{$maxBatchSize}个");
+        }
+
+        // 2. 验证和规范化输入数据
+        $validatedConsignments = [];
+        foreach ($consignments as $index => $item) {
+            $userCollectionId = isset($item['user_collection_id']) ? (int)$item['user_collection_id'] : 0;
+            if (!$userCollectionId) {
+                $this->error("第" . ($index + 1) . "个寄售项缺少用户藏品ID");
+            }
+
+            $price = isset($item['price']) ? (float)$item['price'] : null;
+
+            $validatedConsignments[] = [
+                'user_collection_id' => $userCollectionId,
+                'price' => $price,
+                'index' => $index
+            ];
+        }
+
+        // 3. 执行批量寄售
+        try {
+            // 记录批量操作开始日志
+            Db::name('user_activity_log')->insert([
+                'user_id' => $userId,
+                'action_type' => 'batch_consign_start',
+                'remark' => "用户{$userId}开始批量寄售，共" . count($validatedConsignments) . "个藏品",
+                'extra' => json_encode([
+                    'level' => 'info',
+                    'operation' => 'batch_consign',
+                    'user_id' => $userId,
+                    'consignment_count' => count($validatedConsignments),
+                    'user_collection_ids' => array_column($validatedConsignments, 'user_collection_id')
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+            ]);
+
+            $results = $this->processBatchConsign($userId, $validatedConsignments);
+
+            // 4. 统计结果
+            $totalCount = count($validatedConsignments);
+            $successCount = 0;
+            $failureCount = 0;
+            $failureReasons = [];
+
+            foreach ($results as $result) {
+                if ($result['success']) {
+                    $successCount++;
+                } else {
+                    $failureCount++;
+                    $message = $result['message'];
+                    if (!isset($failureReasons[$message])) {
+                        $failureReasons[$message] = 0;
+                    }
+                    $failureReasons[$message]++;
+                }
+            }
+
+            // 记录批量操作完成日志
+            Db::name('user_activity_log')->insert([
+                'user_id' => $userId,
+                'action_type' => 'batch_consign_complete',
+                'remark' => "用户{$userId}批量寄售完成，成功{$successCount}个，失败{$failureCount}个",
+                'extra' => json_encode([
+                    'level' => $failureCount > 0 ? 'warning' : 'info',
+                    'operation' => 'batch_consign',
+                    'user_id' => $userId,
+                    'total_count' => $totalCount,
+                    'success_count' => $successCount,
+                    'failure_count' => $failureCount,
+                    'success_ids' => array_column(array_filter($results, fn($r) => $r['success']), 'user_collection_id'),
+                    'failure_reasons' => array_map(function($r) {
+                        return ['id' => $r['user_collection_id'], 'reason' => $r['message']];
+                    }, array_filter($results, fn($r) => !$r['success'])),
+                    'failure_summary' => $failureReasons
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+            ]);
+
+            // 记录最终成功日志
+            Db::name('user_activity_log')->insert([
+                'user_id' => $userId,
+                'action_type' => 'batch_consign_final_success',
+                'remark' => "批量寄售最终成功：{$successCount}成功，{$failureCount}失败",
+                'extra' => json_encode([
+                    'level' => 'info',
+                    'operation' => 'batch_consign',
+                    'user_id' => $userId,
+                    'total_count' => $totalCount,
+                    'success_count' => $successCount,
+                    'failure_count' => $failureCount
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+            ]);
+
+            // 当失败数量过多时，只返回汇总信息，不返回详细结果
+            $responseData = [
+                'total_count' => $totalCount,
+                'success_count' => $successCount,
+                'failure_count' => $failureCount,
+                'failure_summary' => $failureReasons,
+            ];
+
+            // 如果失败数量不超过50个，返回详细结果；否则只返回汇总信息
+            if ($failureCount <= 50) {
+                $responseData['results'] = $results;
+            } else {
+                $responseData['note'] = '失败项目过多，仅显示汇总信息。如需查看详细失败原因，请分批次操作';
+            }
+
+            // 直接返回JSON响应，避免$this->success()可能的问题
+            echo json_encode([
+                'code' => 1,
+                'message' => '批量寄售处理完成',
+                'msg' => '批量寄售处理完成',
+                'time' => time(),
+                'data' => $responseData
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+
+        } catch (\Exception $e) {
+            // 记录批量操作失败日志
+            Db::name('user_activity_log')->insert([
+                'user_id' => $userId,
+                'action_type' => 'batch_consign_error',
+                'remark' => "用户{$userId}批量寄售处理失败：" . $e->getMessage(),
+                'extra' => json_encode([
+                    'level' => 'error',
+                    'operation' => 'batch_consign',
+                    'user_id' => $userId,
+                    'consignment_count' => count($validatedConsignments),
+                    'error_message' => $e->getMessage(),
+                    'error_code' => $e->getCode(),
+                    'user_collection_ids' => array_column($validatedConsignments, 'user_collection_id')
+                ], JSON_UNESCAPED_UNICODE),
+                'create_time' => time(),
+            ]);
+
+            $this->error('批量寄售处理失败：' . $e->getMessage(), [
+                'error_code' => $e->getCode(),
+            ]);
+        }
+    }
+
+    #[
+        Apidoc\Title("获取可批量寄售的藏品列表"),
         Apidoc\Tag("藏品商城,寄售"),
         Apidoc\Method("GET"),
-        Apidoc\Url("/api/collectionItem/consignmentCheck"),
+        Apidoc\Url("/api/collectionItem/batchConsignableList"),
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
-        Apidoc\Query(name: "user_collection_id", type: "int", require: true, desc: "用户藏品记录ID"),
+        Apidoc\Returned("stats", type: "object", desc: "统计信息"),
+        Apidoc\Returned("stats.total_collections", type: "int", desc: "用户总藏品数"),
+        Apidoc\Returned("stats.available_collections", type: "int", desc: "可寄售藏品数"),
+        Apidoc\Returned("stats.current_time", type: "string", desc: "当前时间"),
+        Apidoc\Returned("stats.active_sessions", type: "int", desc: "活跃场次数"),
+        Apidoc\Returned("items", type: "array", desc: "可寄售藏品ID列表"),
+        Apidoc\Returned("items[].user_collection_id", type: "int", desc: "用户藏品记录ID"),
+        Apidoc\Returned("available_now_count", type: "int", desc: "当前可寄售数量"),
+        Apidoc\Returned("returned_items_count", type: "int", desc: "返回的藏品数量"),
     ]
+    public function batchConsignableList(): void
+    {
+        if (!$this->auth->isLogin()) {
+            $this->error('请先登录', [], 401);
+        }
+
+        $userId = $this->auth->id;
+
+        $currentTime = date('H:i');
+
+        // 检查当前时间是否在寄售时间范围内
+        $activeSessions = Db::name('collection_session')
+            ->where('status', 1)
+            ->field('title,start_time,end_time')
+            ->select();
+
+        $isInTradingTime = false;
+        foreach ($activeSessions as $session) {
+            if ($this->isTimeInRange($currentTime, $session['start_time'], $session['end_time'])) {
+                $isInTradingTime = true;
+                break;
+            }
+        }
+
+        // 获取用户的基本统计信息
+        $stats = [
+            'total_collections' => Db::name('user_collection')->where('user_id', $userId)->count(),
+            'available_collections' => Db::name('user_collection')
+                ->where('user_id', $userId)
+                ->where('consignment_status', 0)
+                ->where('delivery_status', 0)
+                ->where('mining_status', '<>', 1)
+                ->count(),
+            'current_time' => $currentTime,
+            'active_sessions' => count($activeSessions),
+            'is_in_trading_time' => $isInTradingTime
+        ];
+
+        // 从数据库获取真实的可用藏品ID（仅在交易时间内返回）
+        $availableCollections = [];
+        if ($isInTradingTime) {
+            $availableCollections = Db::name('user_collection')
+                ->where('user_id', $userId)
+                ->where('consignment_status', 0)  // 未寄售
+                ->where('delivery_status', 0)     // 未提货
+                ->where('mining_status', '<>', 1) // 非矿机状态
+                ->order('id DESC')
+                ->limit(1000)  // 最多返回1000个
+                ->column('id');
+        }
+
+        $responseData = [
+            'stats' => $stats,
+            'items' => array_map(function($id) {
+                return ['user_collection_id' => (int)$id];
+            }, $availableCollections),
+            'available_now_count' => $stats['available_collections'],
+            'returned_items_count' => count($availableCollections)
+        ];
+
+        if (!$isInTradingTime) {
+            $responseData['note'] = '当前时间不在寄售场次开放时间内，无法获取可寄售藏品列表';
+        } else {
+            $responseData['note'] = '显示真实的可用藏品ID列表，可直接用于批量寄售API';
+        }
+
+        $this->success('获取成功', $responseData);
+    }
+
+    /**
+     * 处理批量寄售逻辑
+     */
+    private function processBatchConsign(int $userId, array $validatedConsignments): array
+    {
+        $results = [];
+
+        Db::startTrans();
+        try {
+            foreach ($validatedConsignments as $consignment) {
+                $userCollectionId = $consignment['user_collection_id'];
+                $index = $consignment['index'];
+
+                try {
+                    // 1. 校验用户
+                    $user = Db::name('user')
+                        ->where('id', $userId)
+                        ->lock(true)
+                        ->find();
+                    if (!$user) {
+                        throw new \Exception('用户不存在');
+                    }
+
+                    // 2. 校验用户藏品记录
+                    $collection = Db::name('user_collection')
+                        ->where('id', $userCollectionId)
+                        ->where('user_id', $userId)
+                        ->lock(true)
+                        ->find();
+
+                    // 如果通过ID找不到，尝试通过order_id查找（兼容处理）
+                    if (!$collection) {
+                        $collection = Db::name('user_collection')
+                            ->where('order_id', $userCollectionId)
+                            ->where('user_id', $userId)
+                            ->lock(true)
+                            ->find();
+
+                        if ($collection) {
+                            // 更新 userCollectionId 为正确的ID
+                            $userCollectionId = (int)$collection['id'];
+                        }
+                    }
+
+                    if (!$collection) {
+                        throw new \Exception('藏品记录不存在');
+                    }
+
+                    // 检查藏品是否已进行权益交割，已权益交割的藏品不能寄售
+                    $rightsDistributed = Db::name('user_activity_log')
+                        ->where('user_id', $userId)
+                        ->where('action_type', 'rights_distribute')
+                        ->where('extra', 'like', '%"user_collection_id":' . $userCollectionId . '%')
+                        ->find();
+                    if ($rightsDistributed) {
+                        throw new \Exception('该藏品已进行权益交割，无法寄售');
+                    }
+
+                    // 检查藏品是否处于"收益中"状态
+                    $miningStatus = (int)($collection['mining_status'] ?? 0);
+                    if ($miningStatus === 1) {
+                        throw new \Exception('该藏品当前为矿机状态（正在产生收益），无法寄售');
+                    }
+
+                    if ((int)$collection['delivery_status'] !== 0) {
+                        throw new \Exception('已提货的藏品不能寄售');
+                    }
+
+                    $consStatus = (int)$collection['consignment_status'];
+                    if ($consStatus !== 0) {
+                        if ($consStatus === 1) {
+                            throw new \Exception('该藏品当前正在寄售中，无法再次寄售');
+                        } elseif ($consStatus === 2) {
+                            throw new \Exception('该藏品已售出，无法寄售');
+                        } else {
+                            throw new \Exception('该藏品当前状态不允许寄售（状态码：' . $consStatus . '）');
+                        }
+                    }
+
+                    $buyTime = (int)$collection['buy_time'];
+                    // 从系统配置读取寄售解锁小时数
+                    $unlockHoursRaw = get_sys_config('consignment_unlock_hours');
+                    if ($unlockHoursRaw === null || $unlockHoursRaw === '' || !is_numeric($unlockHoursRaw)) {
+                        throw new \Exception('系统未配置寄售解锁小时数，请在后台寄售配置中设置（小时）');
+                    }
+                    $unlockHours = (int)$unlockHoursRaw;
+                    if ($unlockHours < 0) {
+                        throw new \Exception('寄售解锁小时数配置无效，请在后台重新设置');
+                    }
+
+                    // 如果 unlockHours = 0，表示购买后即可寄售，跳过时间检查
+                    if ($unlockHours > 0 && $buyTime) {
+                        $unlockTime = $buyTime + $unlockHours * 3600;
+                        if (time() < $unlockTime) {
+                            $remain = $unlockTime - time();
+                            $hours = ceil($remain / 3600);
+                            throw new \Exception('购买' . $unlockHours . '小时后才允许寄售，剩余约 ' . $hours . ' 小时');
+                        }
+                    }
+
+                    // 获取商品信息
+                    $item = Db::name('collection_item')->where('id', $collection['item_id'])->find();
+
+                    // 异常处理：如果找不到原始商品信息，使用快照信息
+                    if (!$item) {
+                        $item = [
+                            'id' => $collection['item_id'],
+                            'title' => $collection['title'],
+                            'image' => $collection['image'],
+                            'price' => $collection['price'],
+                            'stock' => 0,
+                            'status' => 1,
+                            'price_zone' => $this->getPriceZone((float)$collection['price']),
+                            'package_id' => 0,
+                            'package_name' => '',
+                        ];
+                    }
+
+                    // 寄售价统一按照藏品当前最新价格
+                    $consignmentPrice = (float)($item['price'] ?? 0);
+                    if ($consignmentPrice <= 0) {
+                        $consignmentPrice = (float)$collection['price'];
+                    }
+                    if ($consignmentPrice <= 0) {
+                        throw new \Exception('该藏品未配置售价，无法寄售');
+                    }
+
+                    $itemPriceZone = $item['price_zone'] ?? $this->getPriceZone($consignmentPrice);
+                    if (is_array($itemPriceZone)) {
+                        $itemPriceZone = $itemPriceZone[0] ?? '';
+                    }
+                    $itemPriceZone = (string)$itemPriceZone;
+
+                    $now = time();
+                    $itemTitle = $collection['title'] ?? '';
+                    if (empty($itemTitle)) {
+                        $itemTitle = $item['title'] ?? '藏品寄售';
+                    }
+
+                    // 检查免券资格
+                    $lastConsignment = Db::name('collection_consignment')
+                        ->where('user_collection_id', $userCollectionId)
+                        ->order('id desc')
+                        ->find();
+
+                    $failedConsignment = null;
+                    if ($lastConsignment
+                        && (int)$lastConsignment['status'] === 3
+                        && (int)$lastConsignment['free_relist_used'] === 0
+                    ) {
+                        $failedConsignment = $lastConsignment;
+                    }
+
+                    $freeAttempts = (int)($collection['free_consign_attempts'] ?? 0);
+
+                    // 判断免券类型
+                    $waiveType = 'none';
+                    $isFreeResend = false;
+                    $useFreeAttempt = false;
+
+                    if ($failedConsignment) {
+                        $isFreeResend = true;
+                        $waiveType = 'system_resend';
+                    } elseif ($freeAttempts > 0) {
+                        $useFreeAttempt = true;
+                        $waiveType = 'free_attempt';
+
+                        // 立即扣减免费次数
+                        $updated = Db::name('user_collection')
+                            ->where('id', $userCollectionId)
+                            ->where('free_consign_attempts', '>', 0)
+                            ->dec('free_consign_attempts')
+                            ->update();
+                        if (!$updated) {
+                            throw new \Exception('扣减免费次数失败，请重试');
+                        }
+                    }
+
+                    // 计算费用（与单个寄售保持一致）
+                    $serviceFee = 0;
+                    $platformFee = 0;
+                    $usedCouponId = 0;
+                    $couponUsed = 0;
+                    $couponWaived = $isFreeResend || $useFreeAttempt ? 1 : 0;
+
+                    // ========== 情况 A：首次寄售（正常上架） ==========
+                    if (!$isFreeResend && !$useFreeAttempt) {
+                        // 1. 检查当前是否是开放场次时间
+                        $sessionId = (int)($item['session_id'] ?? 0);
+                        if ($sessionId > 0) {
+                            $session = Db::name('collection_session')
+                                ->where('id', $sessionId)
+                                ->where('status', '1')
+                                ->find();
+
+                            if ($session) {
+                                $currentTime = date('H:i');
+                                $startTime = $session['start_time'] ?? '';
+                                $endTime = $session['end_time'] ?? '';
+
+                                $isInTradingTime = $this->isTimeInRange($currentTime, $startTime, $endTime);
+
+                                if (!$isInTradingTime) {
+                                    $sessionName = $session['title'] ?? '该专场';
+                                    throw new \Exception('交易场次未开启，' . $sessionName . '交易时间为 ' . $startTime . ' - ' . $endTime . '，请在场次开启后再进行寄售');
+                                }
+                            } else {
+                                throw new \Exception('交易场次未开启或不存在，请等待场次开启后再进行寄售');
+                            }
+                        } else {
+                            throw new \Exception('该藏品未关联交易场次，无法寄售');
+                        }
+
+                        // 2. 检查用户确权金余额是否充足
+                        $serviceFeeRate = (float)(get_sys_config('consignment_service_fee_rate') ?? 0.03);
+                        if ($serviceFeeRate <= 0 || $serviceFeeRate > 1) {
+                            $serviceFeeRate = 0.03;
+                        }
+
+                        $baseServiceFee = round($consignmentPrice * $serviceFeeRate, 2);
+                        $serviceFee = $baseServiceFee;
+
+                        // 检查用户是否是代理，如果是则应用服务费折扣
+                        $userType = (int)$user['user_type'];
+                        if ($userType >= 3) {
+                            $serviceFeeDiscount = (float)(get_sys_config('agent_service_discount') ?? 1.0);
+                            if ($serviceFeeDiscount >= 0 && $serviceFeeDiscount <= 1) {
+                                $serviceFee = round($baseServiceFee * $serviceFeeDiscount, 2);
+                            }
+                        }
+
+                        // 检查用户确权金余额是否足够支付服务费
+                        if ($user['service_fee_balance'] < $serviceFee) {
+                            throw new \Exception('确权金不足，无法支付寄售手续费');
+                        }
+
+                        // 3. 检查并扣除寄售券
+                        $itemSessionId = (int)($item['session_id'] ?? 0);
+                        $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
+                        $targetZoneId = (int)($zone['id'] ?? 0);
+
+                        if ($targetZoneId <= 0) {
+                            $itemZoneId = (int)($item['zone_id'] ?? 0);
+                            if ($itemZoneId <= 0 && !empty($itemPriceZone)) {
+                                 $zoneMatch = Db::name('price_zone_config')->where('name', $itemPriceZone)->find();
+                                 if ($zoneMatch) {
+                                     $targetZoneId = (int)$zoneMatch['id'];
+                                 }
+                            } else {
+                                $targetZoneId = $itemZoneId;
+                            }
+                        }
+
+                        $validCoupon = UserService::getAvailableCouponForConsignment($userId, $itemSessionId, $targetZoneId);
+
+                        if (!$validCoupon) {
+                             $zoneName = $zone['name'] ?? ($itemPriceZone ?: "区间#{$targetZoneId}");
+                             throw new \Exception("没有适用于该场次(#{$itemSessionId})和价格区间({$zoneName})的寄售券");
+                        }
+
+                        $usedCouponId = $validCoupon['id'];
+                    } else {
+                        // ========== 情况 B：免费寄售（系统重发或免费次数） ==========
+                        // 仍然需要检查场次时间
+                        $sessionId = (int)($item['session_id'] ?? 0);
+                        if ($sessionId > 0) {
+                            $session = Db::name('collection_session')
+                                ->where('id', $sessionId)
+                                ->where('status', '1')
+                                ->find();
+
+                            if ($session) {
+                                $currentTime = date('H:i');
+                                $startTime = $session['start_time'] ?? '';
+                                $endTime = $session['end_time'] ?? '';
+
+                                $isInTradingTime = $this->isTimeInRange($currentTime, $startTime, $endTime);
+
+                                if (!$isInTradingTime) {
+                                    $sessionName = $session['title'] ?? '该专场';
+                                    throw new \Exception('交易场次未开启，' . $sessionName . '交易时间为 ' . $startTime . ' - ' . $endTime . '，请在场次开启后再进行寄售');
+                                }
+                            } else {
+                                throw new \Exception('交易场次未开启或不存在，请等待场次开启后再进行寄售');
+                            }
+                        } else {
+                            throw new \Exception('该藏品未关联交易场次，无法寄售');
+                        }
+                    }
+
+                    $totalFee = $serviceFee + $platformFee;
+
+                    // 寄售记录创建准备
+
+                    // 创建寄售记录
+                    $consignmentData = [
+                        'user_id' => $userId,
+                        'user_collection_id' => $userCollectionId,
+                        'item_id' => $collection['item_id'],
+                        'session_id' => (int)($item['session_id'] ?? 0),
+                        'zone_id' => $targetZoneId, // 价格分区ID
+                        'package_id' => (int)($item['package_id'] ?? 0),
+                        'package_name' => $item['package_name'] ?? '',
+                        'price' => $consignmentPrice,
+                        'original_price' => (float)($collection['price'] ?? 0), // 原购买价格
+                        'service_fee' => $serviceFee,
+                        'coupon_used' => $couponUsed,
+                        'coupon_waived' => $couponWaived,
+                        'waive_type' => $waiveType,
+                        'coupon_id' => $usedCouponId,
+                        'free_relist_used' => $isFreeResend ? 1 : 0,
+                        'status' => 1, // 1=寄售中
+                        'create_time' => $now,
+                        'update_time' => $now,
+                    ];
+
+                    $consignmentId = Db::name('collection_consignment')->insertGetId($consignmentData);
+
+                    // 更新用户藏品状态为寄售中
+                    Db::name('user_collection')
+                        ->where('id', $userCollectionId)
+                        ->update([
+                            'consignment_status' => 1,
+                            'update_time' => $now,
+                        ]);
+
+                    // ========== 执行扣费扣券（同一事务，确保原子性） ==========
+
+                    // 4. 扣除服务费（确权金）
+                    if ($serviceFee > 0) {
+                        $beforeServiceFee = (float)$user['service_fee_balance'];
+                        $afterServiceFee = $beforeServiceFee - $serviceFee;
+                        Db::name('user')
+                            ->where('id', $userId)
+                            ->update([
+                                'service_fee_balance' => $afterServiceFee,
+                                'update_time' => $now,
+                            ]);
+
+                        // 生成流水号和批次号
+                        $flowNo = generateFlowNo();
+                        $tempBatchNo = generateBatchNo('CONSIGN_TEMP', $userCollectionId);
+
+                        // 记录余额日志
+                        Db::name('user_money_log')->insert([
+                            'flow_no' => $flowNo,
+                            'batch_no' => $tempBatchNo,
+                            'biz_type' => 'consign_apply_fee',
+                            'biz_id' => 0, // 将在创建寄售记录后更新为 consignment_id
+                            'user_collection_id' => $userCollectionId,
+                            'item_id' => (int)$collection['item_id'],
+                            'title_snapshot' => $itemTitle,
+                            'image_snapshot' => $item['image'] ?? '',
+                            'user_id' => $userId,
+                            'field_type' => 'service_fee_balance',
+                            'money' => -$serviceFee,
+                            'before' => $beforeServiceFee,
+                            'after' => $afterServiceFee,
+                            'memo' => '寄售手续费：' . $itemTitle,
+                            'extra_json' => json_encode([
+                                'consignment_price' => $consignmentPrice,
+                                'service_fee' => $serviceFee,
+                                'service_fee_rate' => $serviceFeeRate,
+                            ], JSON_UNESCAPED_UNICODE),
+                            'create_time' => $now,
+                        ]);
+
+                        // 记录活动日志
+                        Db::name('user_activity_log')->insert([
+                            'user_id' => $userId,
+                            'related_user_id' => 0,
+                            'action_type' => 'consignment_fee',
+                            'change_field' => 'service_fee_balance',
+                            'change_value' => (string)(-$serviceFee),
+                            'before_value' => (string)$beforeServiceFee,
+                            'after_value' => (string)$afterServiceFee,
+                            'remark' => '寄售手续费：' . $itemTitle,
+                            'extra' => json_encode([
+                                'consignment_price' => $consignmentPrice,
+                                'service_fee' => $serviceFee,
+                                'service_fee_rate' => $serviceFeeRate,
+                                'user_collection_id' => $userCollectionId,
+                                'is_free_resend' => false,
+                            ], JSON_UNESCAPED_UNICODE),
+                            'create_time' => $now,
+                            'update_time' => $now,
+                        ]);
+                    }
+
+                    // 5. 扣除寄售券（如果不是免券）
+                    if ($usedCouponId > 0) {
+                        try {
+                            $couponSuccess = UserService::useCoupon($usedCouponId, $userId);
+                            if (!$couponSuccess) {
+                                throw new \Exception('寄售券扣除失败，请重试');
+                            }
+                            $couponUsed = 1;
+                        } catch (\Exception $e) {
+                            throw new \Exception('寄售券扣除失败：' . $e->getMessage());
+                        }
+
+                        // 记录活动日志
+                        Db::name('user_activity_log')->insert([
+                            'user_id' => $userId,
+                            'related_user_id' => 0,
+                            'action_type' => 'consignment_coupon_use',
+                            'change_field' => 'consignment_coupon',
+                            'change_value' => '-1',
+                            'before_value' => '1',
+                            'after_value' => '0',
+                            'remark' => '使用寄售券：' . $itemPriceZone . '（寄售：' . $itemTitle . '）',
+                            'extra' => json_encode([
+                                'coupon_id' => $usedCouponId,
+                                'price_zone' => $itemPriceZone,
+                                'user_collection_id' => $userCollectionId,
+                                'item_title' => $itemTitle,
+                            ], JSON_UNESCAPED_UNICODE),
+                            'create_time' => $now,
+                            'update_time' => $now,
+                        ]);
+                    }
+
+                    // 记录寄售成功日志
+                    Db::name('user_activity_log')->insert([
+                        'user_id' => $userId,
+                        'action_type' => 'consign_success',
+                        'remark' => "批量寄售成功：{$itemTitle}",
+                        'extra' => json_encode([
+                            'level' => 'info',
+                            'operation' => 'batch_consign',
+                            'user_id' => $userId,
+                            'user_collection_id' => $userCollectionId,
+                            'consignment_id' => $consignmentId,
+                            'price' => $consignmentPrice,
+                            'fee' => $totalFee,
+                            'waive_type' => $waiveType,
+                        ], JSON_UNESCAPED_UNICODE),
+                        'create_time' => $now,
+                    ]);
+
+                    $results[] = [
+                        'index' => $index,
+                        'user_collection_id' => $userCollectionId,
+                        'success' => true,
+                        'message' => '寄售成功',
+                        'data' => [
+                            'consignment_id' => $consignmentId,
+                            'price' => $consignmentPrice,
+                            'service_fee' => $serviceFee,
+                            'waive_type' => $waiveType,
+                        ]
+                    ];
+
+                } catch (\Exception $e) {
+                    $results[] = [
+                        'index' => $index,
+                        'user_collection_id' => $userCollectionId,
+                        'success' => false,
+                        'message' => $e->getMessage(),
+                    ];
+                }
+            }
+
+            Db::commit();
+
+        } catch (\Exception $e) {
+            Db::rollback();
+            throw $e;
+        }
+
+        return $results;
+    }
+
     public function consignmentCheck(): void
     {
         if (!$this->auth->isLogin()) {
@@ -2943,7 +3671,7 @@ class CollectionItem extends Frontend
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
         Apidoc\Query(name: "page", type: "int", require: false, desc: "页码", default: "1"),
         Apidoc\Query(name: "limit", type: "int", require: false, desc: "每页数量", default: "10"),
-        Apidoc\Query(name: "status", type: "string", require: false, desc: "状态筛选: all=全部, holding=待寄售/持有中(默认), consigned=寄售中, failed=寄售失败, sold=已售出"),
+        Apidoc\Query(name: "status", type: "string", require: false, desc: "状态筛选: all=全部(返回全部状态), holding=待寄售/持有中(默认), consigned=寄售中, failed=寄售失败, sold=已售出"),
 
         Apidoc\Returned("list[].id", type: "int", desc: "用户藏品ID"),
         Apidoc\Returned("list[].unique_id", type: "string", desc: "唯一标识ID"),
@@ -3054,23 +3782,18 @@ class CollectionItem extends Frontend
 
             // 状态筛选
             if ($status === 'holding') {
-                // 持有中：未发货且未售出（consignment_status != 2）
-                $query->where('uc.consignment_status', '<>', 2)
-                      ->where('uc.delivery_status', 0);
+                // 持有中：未寄售、未发货、非矿机状态
+                $query->where('uc.consignment_status', 0)  // 未寄售
+                      ->where('uc.delivery_status', 0)     // 未提货
+                      ->where('uc.mining_status', '<>', 1); // 非矿机状态
             } elseif ($status === 'consigned') {
                 // 寄售中
                 $query->where('uc.consignment_status', 1);
-            }
-            
-            if ($status === 'all') {
+            } elseif ($status === 'all') {
                 // all 状态：包含持有中、寄售中，但不包含已售出（已售出单独查询）
                 $query->where('uc.consignment_status', '<>', 2)
-                      ->where('uc.delivery_status', 0);
-            } elseif ($status === 'holding') {
-                // 排除已售出的 (已售出代表所有权已转移)
-                $query->where('uc.consignment_status', '<>', 2);
-                // 排除已提货的 (已实体交割)
-                $query->where('uc.delivery_status', 0);
+                      ->where('uc.delivery_status', 0)
+                      ->where('uc.mining_status', '<>', 1); // 非矿机状态
             }
 
             $list = $query

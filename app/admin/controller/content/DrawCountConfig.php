@@ -1993,5 +1993,88 @@ class DrawCountConfig extends Backend
             $this->error($e->getMessage());
         }
     }
+
+    /**
+     * 获取/保存直播视频配置
+     * @throws Throwable
+     */
+    public function liveVideoConfig(): void
+    {
+        try {
+            if ($this->request->isPost()) {
+                $videoUrl = (string)$this->request->post('video_url', '');
+                $title = (string)$this->request->post('title', '');
+                $description = (string)$this->request->post('description', '');
+
+                // 验证数据
+                if (empty($videoUrl)) {
+                    $this->error('视频地址不能为空');
+                }
+
+                // 基本URL格式验证
+                if (!filter_var($videoUrl, FILTER_VALIDATE_URL)) {
+                    $this->error('请输入有效的视频地址URL');
+                }
+
+                // 检查是否为mp4格式（如果提供了后缀）
+                $pathInfo = pathinfo($videoUrl);
+                if (isset($pathInfo['extension']) && strtolower($pathInfo['extension']) !== 'mp4') {
+                    $this->error('目前只支持MP4格式的视频文件');
+                }
+
+                // 保存配置到系统配置表
+                $configs = [
+                    'live_video_url' => $videoUrl,
+                    'live_video_title' => $title,
+                    'live_video_description' => $description,
+                ];
+
+                foreach ($configs as $name => $value) {
+                    $existing = ConfigModel::where('name', $name)->field('id,name')->find();
+                    if ($existing) {
+                        ConfigModel::where('name', $name)->update(['value' => $value]);
+                    } else {
+                        $titles = [
+                            'live_video_url' => '直播视频地址',
+                            'live_video_title' => '直播视频标题',
+                            'live_video_description' => '直播视频描述',
+                        ];
+                        $tips = [
+                            'live_video_url' => '直播视频的MP4文件地址',
+                            'live_video_title' => '直播视频的标题显示',
+                            'live_video_description' => '直播视频的详细描述',
+                        ];
+                        \think\facade\Db::name('config')->insert([
+                            'name' => $name,
+                            'value' => $value,
+                            'title' => $titles[$name],
+                            'tip' => $tips[$name],
+                            'type' => 'string',
+                            'group' => 'live',
+                            'content' => '',
+                            'rule' => '',
+                            'extend' => '',
+                            'allow_del' => 1,
+                            'weigh' => 0,
+                        ]);
+                    }
+                }
+
+                Cache::tag(ConfigModel::$cacheTag)->clear();
+
+                $this->success('直播视频配置更新成功');
+            } else {
+                $this->success('', [
+                    'video_url' => (string)get_sys_config('live_video_url', ''),
+                    'title' => (string)get_sys_config('live_video_title', ''),
+                    'description' => (string)get_sys_config('live_video_description', ''),
+                ]);
+            }
+        } catch (HttpResponseException $e) {
+            throw $e;
+        } catch (Throwable $e) {
+            $this->error($e->getMessage());
+        }
+    }
 }
 

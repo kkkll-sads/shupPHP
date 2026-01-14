@@ -110,6 +110,62 @@
                 <el-card class="config-card" shadow="hover">
                     <template #header>
                         <div class="card-header">
+                            <span class="card-title">直播视频配置</span>
+                            <div class="card-actions">
+                                <el-button size="small" @click="fetchLiveVideoConfig" :loading="liveVideoConfigLoading" :icon="Refresh">刷新</el-button>
+                                <el-button size="small" type="primary" @click="saveLiveVideoConfig" :loading="savingLiveVideoConfig">保存</el-button>
+                            </div>
+                        </div>
+                    </template>
+                    <el-form :model="liveVideoConfig" label-width="120px" v-loading="liveVideoConfigLoading">
+                        <el-form-item label="配置说明">
+                            <el-alert type="info" :closable="false" show-icon>
+                                <template #default>
+                                    <div>配置直播视频，支持MP4格式的视频文件</div>
+                                    <div class="alert-tip">可以直接填写视频URL地址，或上传本地视频文件</div>
+                                    <div class="alert-tip">示例：http://example.com/video.mp4</div>
+                                </template>
+                            </el-alert>
+                        </el-form-item>
+                        <el-form-item label="视频地址">
+                            <el-input v-model="liveVideoConfig.video_url" placeholder="请输入MP4视频文件的完整URL地址，或使用下方上传功能" />
+                            <span class="form-tip">可以直接填写URL或上传本地视频文件</span>
+                            <el-upload
+                                ref="videoUploadRef"
+                                class="upload-demo"
+                                :action="uploadUrl"
+                                :headers="uploadHeaders"
+                                :limit="1"
+                                :file-list="videoFileList"
+                                :on-success="handleVideoUploadSuccess"
+                                :on-error="handleVideoUploadError"
+                                :on-change="handleVideoFileChange"
+                                :before-upload="beforeVideoUpload"
+                                accept=".mp4,.MP4"
+                            >
+                                <el-button size="small" type="primary">上传视频</el-button>
+                                <template #tip>
+                                    <div class="el-upload__tip">只能上传MP4格式的视频文件，文件大小不超过100MB</div>
+                                </template>
+                            </el-upload>
+                        </el-form-item>
+                        <el-form-item label="视频标题">
+                            <el-input v-model="liveVideoConfig.title" placeholder="请输入视频标题（可选）" />
+                            <span class="form-tip">显示在直播视频旁的标题文字</span>
+                        </el-form-item>
+                        <el-form-item label="视频描述">
+                            <el-input v-model="liveVideoConfig.description" type="textarea" :rows="3" placeholder="请输入视频描述（可选）" />
+                            <span class="form-tip">视频的详细描述信息</span>
+                        </el-form-item>
+                    </el-form>
+                </el-card>
+            </el-col>
+        </el-row>
+        <el-row :gutter="20" style="margin-top: 20px;">
+            <el-col :xs="24">
+                <el-card class="config-card" shadow="hover">
+                    <template #header>
+                        <div class="card-header">
                             <span class="card-title">交易结算配置</span>
                             <div class="card-actions">
                                 <el-button size="small" @click="fetchConsignmentSettlementConfig" :loading="settlementConfigLoading" :icon="Refresh">刷新</el-button>
@@ -183,6 +239,25 @@ const savingSettlementConfig = ref(false)
 const consignmentSettlementConfig = reactive({
     profit_balance_rate: 0.5,
     profit_score_rate: 0.5,
+})
+
+const liveVideoConfigLoading = ref(false)
+const savingLiveVideoConfig = ref(false)
+const liveVideoConfig = reactive({
+    video_url: '',
+    title: '',
+    description: '',
+})
+
+// 视频上传相关
+const videoUploadRef = ref()
+const videoFileList = ref([])
+const uploadUrl = '/admin/ajax/upload'
+const uploadHeaders = computed(() => {
+    // 后台Ajax上传不需要额外的认证头，后台会自动处理管理员认证
+    return {
+        'X-Requested-With': 'XMLHttpRequest'
+    }
 })
 
 const averageIncrease = computed(() => {
@@ -317,10 +392,113 @@ const saveConsignmentSettlementConfig = () => {
         })
 }
 
+const fetchLiveVideoConfig = () => {
+    liveVideoConfigLoading.value = true
+    createAxios({ url: '/admin/content.DrawCountConfig/liveVideoConfig', method: 'GET' })
+        .then((res) => {
+            liveVideoConfig.video_url = res.data.video_url ?? ''
+            liveVideoConfig.title = res.data.title ?? ''
+            liveVideoConfig.description = res.data.description ?? ''
+        })
+        .finally(() => {
+            liveVideoConfigLoading.value = false
+        })
+}
+
+const saveLiveVideoConfig = () => {
+    // 检查是否有视频来源（URL或上传的文件）
+    if (!liveVideoConfig.video_url.trim() && videoFileList.value.length === 0) {
+        ElMessage.warning('请填写视频地址或上传视频文件')
+        return
+    }
+
+    // 如果填写了URL，进行格式验证
+    if (liveVideoConfig.video_url.trim()) {
+        try {
+            new URL(liveVideoConfig.video_url)
+        } catch {
+            ElMessage.warning('请输入有效的视频地址URL')
+            return
+        }
+    }
+
+    savingLiveVideoConfig.value = true
+    createAxios({ url: '/admin/content.DrawCountConfig/liveVideoConfig', method: 'POST', data: { video_url: liveVideoConfig.video_url, title: liveVideoConfig.title, description: liveVideoConfig.description } }, { showSuccessMessage: true })
+        .then(() => {
+            fetchLiveVideoConfig()
+        })
+        .finally(() => {
+            savingLiveVideoConfig.value = false
+        })
+}
+
+// 视频上传处理方法
+const beforeVideoUpload = (file) => {
+    const isMP4 = file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4')
+    const isLt100M = file.size / 1024 / 1024 < 100
+
+    if (!isMP4) {
+        ElMessage.error('只能上传MP4格式的视频文件!')
+        return false
+    }
+    if (!isLt100M) {
+        ElMessage.error('上传视频文件大小不能超过100MB!')
+        return false
+    }
+
+    return true
+}
+
+const handleVideoUploadSuccess = (response, file, fileList) => {
+    console.log('Upload response:', response) // 调试信息
+
+    // 处理Ajax上传接口的响应格式
+    if (response.code === 0 || response.code === 200 || response.code === '0') {
+        // 上传成功，将文件URL填入输入框
+        let videoUrl = ''
+        if (response.data && response.data.file && response.data.file.url) {
+            videoUrl = response.data.file.url
+        }
+
+        if (videoUrl) {
+            // 如果URL不是完整的HTTP URL，添加域名
+            if (!videoUrl.startsWith('http')) {
+                const baseUrl = window.location.origin
+                videoUrl = baseUrl + (videoUrl.startsWith('/') ? '' : '/') + videoUrl
+            }
+            liveVideoConfig.video_url = videoUrl
+            videoFileList.value = [file]
+            ElMessage.success('视频上传成功')
+        } else {
+            ElMessage.warning('上传成功但无法获取文件URL，请手动填写')
+            console.warn('Cannot find video URL in response:', response)
+        }
+    } else {
+        const errorMsg = response.msg || response.message || response.error || '上传失败'
+        ElMessage.error(errorMsg)
+        console.error('Upload failed:', response)
+    }
+}
+
+const handleVideoUploadError = (error, file, fileList) => {
+    ElMessage.error('视频上传失败，请重试')
+    console.error('Upload error:', error)
+}
+
+const handleVideoFileChange = (file, fileList) => {
+    videoFileList.value = fileList
+    // 如果删除了所有文件，清空URL（如果URL来自上传的文件）
+    if (fileList.length === 0 && !liveVideoConfig.video_url.trim()) {
+        // 如果用户删除了上传的文件但没有手动输入URL，则清空
+        // 这里可以根据需要调整逻辑
+    }
+}
+
 fetchCollectionPriceIncreaseConfig()
 fetchConsignmentExpireConfig()
 fetchConsignmentSettlementConfig()
 fetchConsignmentUnlockConfig()
+fetchLiveVideoConfig()
 </script>
 
 <style scoped lang="scss">
@@ -362,6 +540,18 @@ fetchConsignmentUnlockConfig()
         margin-left: 12px;
         color: var(--el-text-color-secondary);
         font-size: 12px;
+    }
+
+    :deep(.upload-demo) {
+        .el-upload {
+            margin-top: 8px;
+        }
+
+        .el-upload__tip {
+            margin-top: 8px;
+            color: var(--el-text-color-secondary);
+            font-size: 12px;
+        }
     }
 }
 </style>
