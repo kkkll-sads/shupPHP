@@ -309,48 +309,14 @@ class UserService
 
             // 查找可用的寄售券：
             // 1. 同一场次
-            // 2. 同一区间或前后五个区间（允许跨五个区间）
+            // 2. 不限价格分区（已移除分区限制）
             
-            // 获取所有分区并按价格排序
-            $allZones = Db::name('price_zone_config')
-                ->where('status', 1)
-                ->order('min_price', 'asc')
-                ->column('id'); // Returns array of IDs in order [1, 2, ..., 9, 12, 10, 11, 13]
-            
-            $targetIndex = array_search($targetZoneId, $allZones);
-            $allowedZones = [$targetZoneId];
-            
-            // 允许前五个分区（逻辑上的上五个区间）
-            if ($targetIndex !== false && $targetIndex > 0) {
-                for ($i = 1; $i <= 5 && ($targetIndex - $i) >= 0; $i++) {
-                    $prevZoneId = $allZones[$targetIndex - $i];
-                    if (!in_array($prevZoneId, $allowedZones)) {
-                        $allowedZones[] = $prevZoneId;
-                    }
-                }
-            }
-            
-            // 允许后五个分区（逻辑上的下五个区间）
-            if ($targetIndex !== false && $targetIndex < count($allZones) - 1) {
-                for ($i = 1; $i <= 5 && ($targetIndex + $i) < count($allZones); $i++) {
-                    $nextZoneId = $allZones[$targetIndex + $i];
-                    if (!in_array($nextZoneId, $allowedZones)) {
-                        $allowedZones[] = $nextZoneId;
-                    }
-                }
-            }
-            
-            // 兼容旧逻辑：如果 ID-1 不是逻辑上一区间，且 ID-1 > 0，也允许（防止某些特殊情况）
-            if ($targetZoneId > 1 && !in_array($targetZoneId - 1, $allowedZones)) {
-                $allowedZones[] = $targetZoneId - 1;
-            }
-
             $coupon = Db::name('user_consignment_coupon')
                 ->where('user_id', $userId)
                 ->where('session_id', $sessionId)
                 ->where('status', 1) // 可用
                 ->where('expire_time', '>', $now)
-                ->whereIn('zone_id', $allowedZones)
+                // 移除分区限制：->whereIn('zone_id', $allowedZones)
                 ->order('expire_time asc') // 优先使用快过期的
                 ->find();
 
