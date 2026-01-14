@@ -29,6 +29,43 @@ class Order extends Backend
     }
 
     /**
+     * 返回select搜索的选项数据
+     * @throws Throwable
+     */
+    public function select(): void
+    {
+        $field = $this->request->get('field', '');
+        
+        // 定义可搜索字段的选项
+        $options = [];
+        
+        switch ($field) {
+            case 'status':
+                $options = [
+                    ['value' => 'pending', 'label' => '待支付'],
+                    ['value' => 'paid', 'label' => '已支付'],
+                    ['value' => 'shipped', 'label' => '已发货'],
+                    ['value' => 'completed', 'label' => '已完成'],
+                    ['value' => 'cancelled', 'label' => '已取消'],
+                    ['value' => 'refunded', 'label' => '已退款'],
+                ];
+                break;
+                
+            case 'pay_type':
+                $options = [
+                    ['value' => 'money', 'label' => '余额支付'],
+                    ['value' => 'score', 'label' => '消费金支付'],
+                    ['value' => 'combined', 'label' => '组合支付'],
+                ];
+                break;
+        }
+        
+        $this->success('', [
+            'options' => $options
+        ]);
+    }
+
+    /**
      * @throws Throwable
      */
     public function index(): void
