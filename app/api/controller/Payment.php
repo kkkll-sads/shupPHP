@@ -813,8 +813,28 @@ nz1TDrDYrCOS
 -----END PRIVATE KEY-----";
         
         // 获取用户信息（用于memberNo）
-        $userInfo = Db::name('user')->where('id', explode('-', $order_no)[0] ?? 0)->find();
+        // 方法1：从订单表查询用户ID
+        $userId = 0;
+        $order = null;
+        if ($orderType == 'recharge') {
+            $order = Db::name('recharge_order')->where('order_no', $order_no)->field('user_id')->find();
+        } else if ($orderType == 'order') {
+            $order = Db::name('shop_order')->where('order_no', $order_no)->field('user_id')->find();
+        }
+        
+        if ($order && isset($order['user_id'])) {
+            $userId = $order['user_id'];
+        } else {
+            // 方法2：从订单号解析（充值订单号格式：RC + YmdHis(14位) + 用户ID(6位补0) + 随机数(4位)）
+            if (strlen($order_no) >= 26 && strpos($order_no, 'RC') === 0) {
+                $userId = intval(substr($order_no, -10, 6));
+            }
+        }
+        
+        $userInfo = Db::name('user')->where('id', $userId)->find();
         $memberNo = $userInfo['nickname'] ?? 'User' . rand(1000, 9999);
+        
+        Log::info('三剑支付订单号解析: order_no=' . $order_no . ', orderType=' . $orderType . ', userId=' . $userId . ', memberNo=' . $memberNo);
         
         // 构建请求参数
         $requestData = [
