@@ -754,24 +754,24 @@ class CollectionItem extends Frontend
             
             // 循环创建多个预约记录
             for ($i = 1; $i <= $quantity; $i++) {
-                $reservationId = Db::name('trade_reservations')->insertGetId([
-                    'user_id' => $userId,
-                    'session_id' => $sessionId,
-                    'zone_id' => $zoneId,
+            $reservationId = Db::name('trade_reservations')->insertGetId([
+                'user_id' => $userId,
+                'session_id' => $sessionId,
+                'zone_id' => $zoneId,
                     'package_id' => $packageId,
                     'product_id' => 0,  // 盲盒模式
                     'freeze_amount' => $singleFreezeAmount,
                     'power_used' => $singleHashrate,
-                    'base_hashrate_cost' => $baseCost,
-                    'extra_hashrate_cost' => $extraHashrate,
-                    'weight' => $finalWeight,
-                    'status' => 0,  // 待撮合
-                    'match_order_id' => 0,
-                    'match_time' => null,
-                    'create_time' => $now,
-                    'update_time' => $now,
-                ]);
-                
+                'base_hashrate_cost' => $baseCost,
+                'extra_hashrate_cost' => $extraHashrate,
+                'weight' => $finalWeight,
+                'status' => 0,  // 待撮合
+                'match_order_id' => 0,
+                'match_time' => null,
+                'create_time' => $now,
+                'update_time' => $now,
+            ]);
+
                 $reservationIds[] = $reservationId;
             }
 
@@ -1012,9 +1012,9 @@ class CollectionItem extends Frontend
                     $row['zone_max_price'] = (float)$correctZone['max_price'];
                 } else {
                     // 如果找不到完全匹配的，使用当前关联的分区（保持原逻辑）
-                    $row['zone_name'] = $row['zone_name'] ?? '';
-                    $row['zone_min_price'] = (float)($row['zone_min_price'] ?? 0);
-                    $row['zone_max_price'] = (float)($row['zone_max_price'] ?? 0);
+            $row['zone_name'] = $row['zone_name'] ?? '';
+            $row['zone_min_price'] = (float)($row['zone_min_price'] ?? 0);
+            $row['zone_max_price'] = (float)($row['zone_max_price'] ?? 0);
                 }
             } else {
                 // 冻结金额与分区最高价匹配，使用当前关联的分区
@@ -2027,17 +2027,17 @@ class CollectionItem extends Frontend
                 
                 // 如果根据价格获取的 zone_id 无效，尝试使用藏品的 zone_id 或 price_zone
                 if ($targetZoneId <= 0) {
-                    $itemZoneId = (int)($item['zone_id'] ?? 0);
-                    
-                    // 尝试补全 zone_id
-                    if ($itemZoneId <= 0 && !empty($itemPriceZone)) {
-                         $zoneMatch = Db::name('price_zone_config')->where('name', $itemPriceZone)->find();
-                         if ($zoneMatch) {
+                $itemZoneId = (int)($item['zone_id'] ?? 0);
+                
+                // 尝试补全 zone_id
+                if ($itemZoneId <= 0 && !empty($itemPriceZone)) {
+                     $zoneMatch = Db::name('price_zone_config')->where('name', $itemPriceZone)->find();
+                     if ($zoneMatch) {
                              $targetZoneId = (int)$zoneMatch['id'];
                          }
                     } else {
                         $targetZoneId = $itemZoneId;
-                    }
+                     }
                 }
 
                 $validCoupon = UserService::getAvailableCouponForConsignment($userId, $itemSessionId, $targetZoneId);
@@ -2204,7 +2204,7 @@ class CollectionItem extends Frontend
             // 6. 根据藏品的 package_id 和寄售价格分区匹配资产包
             // 🔧 修复：如果前面已经获取过 zone，直接使用，避免重复查询
             if (!isset($zone) || empty($zone)) {
-                $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
+            $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
             }
             $zoneId = (int)($zone['id'] ?? 0);
             
@@ -3770,6 +3770,9 @@ class CollectionItem extends Frontend
                 $query->where('cc.status', 3); // 3=流拍失败
             }
 
+            // 先计算总数（在应用分页前）
+            $total = (clone $query)->count();
+            
             $list = $query
                 ->field([
                     'cc.id as consignment_id',
@@ -3805,12 +3808,10 @@ class CollectionItem extends Frontend
                     's.title as session_title',
                     'pzc.name as zone_name',
                 ])
-                ->order('cc.create_time desc')
+                ->order('cc.create_time desc, cc.id desc')  // 添加 id 作为第二排序字段，确保排序稳定
                 ->page($page, $limit)
                 ->select()
                 ->toArray();
-
-            $total = (clone $query)->count();
 
             // 格式化已售出/流拍记录
             foreach ($list as &$item) {
@@ -3848,6 +3849,9 @@ class CollectionItem extends Frontend
                 // 注意：all 状态现在包含矿机，不再排除 mining_status
             }
 
+            // 先计算总数（在应用分页前）
+            $total = (clone $query)->count();
+            
             $list = $query
                 ->field([
                     'uc.id',
@@ -3880,12 +3884,10 @@ class CollectionItem extends Frontend
                     'i.zone_id',
                     'i.price_zone',
                 ])
-                ->order('uc.create_time desc')
+                ->order('uc.create_time desc, uc.id desc')  // 添加 id 作为第二排序字段，确保排序稳定
                 ->page($page, $limit)
                 ->select()
                 ->toArray();
-
-            $total = $query->count();
 
             // 批量查询流拍次数
             $itemIds = array_column($list, 'item_id');
