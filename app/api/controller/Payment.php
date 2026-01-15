@@ -15,7 +15,7 @@ class Payment extends Frontend
 {
     protected array $noNeedLogin = [
         'dakaNotify', 'xiongmaoNotify', 'qipilangNotify', 'daka2Notify', 'zhiyangNotify',
-        'shandianNotify'
+        'shandianNotify', 'sanjianNotify'
     ];
     
     protected static $notifyUrl = 'http://23.248.226.82:5657/api/Payment/';
@@ -64,6 +64,8 @@ class Payment extends Frontend
                 $pay_url = self::lelePay($order_no, $amount, $orderType, $code);
             } else if ($payment['bank_name'] == '闪电支付') {
                 $pay_url = self::shandianPay($order_no, $amount, $orderType, $code);
+            } else if ($payment['bank_name'] == '三剑支付') {
+                $pay_url = self::sanjianPay($order_no, $amount, $orderType, $code);
             }
             if ($pay_url) {
                 return ['code'=> 0, 'data'=> $pay_url, 'order'=> $order, 'orderType' => $orderType, 'cannelId' => $code, 'cannelName' => $payment['bank_name']];
@@ -721,13 +723,198 @@ class Payment extends Frontend
         return $code;
     }
     
+    ////////////////////////////// 三剑支付 //////////////////////////////
+    /**
+     * 三剑支付 - RSA签名
+     */
+    private static function sanjianRsaSign($data, $privateKey)
+    {
+        $privateKeyResource = openssl_pkey_get_private($privateKey);
+        if (!$privateKeyResource) {
+            Log::error('三剑支付RSA私钥加载失败');
+            return null;
+        }
+        
+        // 按照参数名ASCII码从小到大排序（字典序）
+        ksort($data);
+        
+        // 拼接签名字符串（key=value&key=value）
+        $signString = '';
+        foreach ($data as $key => $value) {
+            if ($value !== '' && $value !== null && $key != 'sign') {
+                $signString .= $key . '=' . $value . '&';
+            }
+        }
+        $signString = rtrim($signString, '&');
+        
+        Log::info('三剑支付签名原文: ' . $signString);
+        
+        // RSA签名
+        $signature = '';
+        openssl_sign($signString, $signature, $privateKeyResource, OPENSSL_ALGO_SHA256);
+        openssl_free_key($privateKeyResource);
+        
+        $sign = base64_encode($signature);
+        Log::info('三剑支付签名结果: ' . $sign);
+        
+        return $sign;
+    }
     
+    /**
+     * 三剑支付 - RSA验签
+     */
+    private static function sanjianRsaVerify($data, $sign, $publicKey)
+    {
+        $publicKeyResource = openssl_pkey_get_public($publicKey);
+        if (!$publicKeyResource) {
+            Log::error('三剑支付RSA公钥加载失败');
+            return false;
+        }
+        
+        // 按照参数名ASCII码从小到大排序（字典序）
+        ksort($data);
+        
+        // 拼接签名字符串
+        $signString = '';
+        foreach ($data as $key => $value) {
+            if ($value !== '' && $value !== null && $key != 'sign') {
+                $signString .= $key . '=' . $value . '&';
+            }
+        }
+        $signString = rtrim($signString, '&');
+        
+        // RSA验签
+        $result = openssl_verify($signString, base64_decode($sign), $publicKeyResource, OPENSSL_ALGO_SHA256);
+        openssl_free_key($publicKeyResource);
+        
+        return $result === 1;
+    }
     
+    public static function sanjianPay($order_no, $amount, $orderType, $code)
+    {
+        // 三剑支付配置
+        $merchantId = '80372';
+        $version = '1.0.1';
+        $privateKey = "-----BEGIN PRIVATE KEY-----
+MIICdQIBADANBgkqhkiG9w0BAQEFAASCAl8wggJbAgEAAoGBAI68xJvBb2hFrRdc
+88I779mOyZdaPIGSDAsdDgn0I9ceqVIOgpWI2ANcS6KS2u+dNNz3rzsx59CFYq1R
+o1kMvK8R9+T4Q9kxAb3r14Ebfoqt/5ynCrql5TrqauOvcFd6q/c3Gn3BBC+b7Sry
+PBUfY69J8ui9gfaqJ1nydPtGrHhjAgMBAAECgYAlak/zMBpe79y2ghQXdxShJ6+q
+L+oqYLktdJlIfKmkaxIhQ1JxliRhhSECZZJkOwYvYfGaB7PnUf+SxRKXdiJDMa+9
+BgOPgx778Y3cM4zf7tltWTGM6xWPIznnXXMVNssVTPf2UXjau974nUPeA6ednxSp
+GVmTuGEOOdl3CR0N+QJBAMBtCHFoPirfF728fBbleZI7129N1P+7R6FUCjH1KxvY
+CvPqslabmTJwgX3bXzsGw4+YTagUJGh4kt8pKLQ3o88CQQC95S+u4/zM2FFCzqaj
+VPzYkQ5kS84FJD1WGRdIe7b9aNnq2+/vDERhkEP/tBjzwx0xIgVCe3htsQEAIw14
+gsMtAkBz5rh5JmKbi/hOziKn39wT2ntujSDIT9NbNrVVVeh7QuuF800roVjq6pz0
+Y5e+g9pyuTe9DzTGwCkmxTHBKuo9AkBbfgkzYnVy3OaKIbb4CwKn9XvRpxRkNcm3
+qe8l5TWNcu9L0RwROP/ZYgDhOoyrJd7yxUlzdrnXX+jzf/AFmDshAkBNpcgUrahh
+ivtxoxgrBbfbZqAIYeGVhLVOIKetQ8oLPwbKTH8VTJJd9g2iziI6cuEOerJt9Pld
+nz1TDrDYrCOS
+-----END PRIVATE KEY-----";
+        
+        // 获取用户信息（用于memberNo）
+        $userInfo = Db::name('user')->where('id', explode('-', $order_no)[0] ?? 0)->find();
+        $memberNo = $userInfo['nickname'] ?? 'User' . rand(1000, 9999);
+        
+        // 构建请求参数
+        $requestData = [
+            'merchantId' => intval($merchantId),
+            'version' => $version,
+            'merchantOrderNo' => $order_no . '-' . $orderType,
+            'amount' => strval($amount),
+            'model' => $code,
+            'memberNo' => $memberNo,
+            'notifyUrl' => self::$notifyUrl . 'sanjianNotify',
+            'extCode' => $order_no,
+        ];
+        
+        // 生成签名
+        $sign = self::sanjianRsaSign($requestData, $privateKey);
+        if (!$sign) {
+            Log::error('三剑支付签名生成失败');
+            return null;
+        }
+        
+        $requestData['sign'] = $sign;
+        
+        // 发送请求
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, 'https://gateway.ssjpay.com/api/payOrder/create');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($requestData, JSON_UNESCAPED_UNICODE));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+        ]);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        
+        $response = curl_exec($ch);
+        $error = curl_error($ch);
+        curl_close($ch);
+        
+        Log::info('三剑支付请求数据: ' . json_encode($requestData, JSON_UNESCAPED_UNICODE));
+        Log::info('三剑支付返回数据: ' . $response);
+        
+        if ($error) {
+            Log::error('三剑支付请求失败: ' . $error);
+            return null;
+        }
+        
+        $result = json_decode($response, true);
+        if (!isset($result['code']) || $result['code'] !== '0') {
+            Log::error('三剑支付返回错误: ' . ($result['msg'] ?? '未知错误'));
+            return null;
+        }
+        
+        return $result['url'] ?? '';
+    }
     
-    
-    
-    
-    
-    
+    public function sanjianNotify()
+    {
+        $params = $this->getInputParam();
+        
+        Log::info('三剑支付回调数据: ' . json_encode($params, JSON_UNESCAPED_UNICODE));
+        
+        // 三剑支付平台公钥
+        $platformPublicKey = "-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCrGCvsugZAXMRZxe6EOOSUwlPC
+Nqq6zliOEHw6mVQ3HGMMAZJ9mURVtQXmoNHGrRHitBnb2SNWfo6cDJb3T4Vfs1gB
+Kkf8Do82G3zfRaZjK9Nmwws/xSSZZeiaHVvLfYvNf7Ui7F2RLcWgHcp9IYrftMf3
+QksdCxZcoWjiTvqH7QIDAQAB
+-----END PUBLIC KEY-----";
+        
+        // 验证签名
+        $sign = $params['sign'] ?? '';
+        unset($params['sign']);
+        
+        $verifyResult = self::sanjianRsaVerify($params, $sign, $platformPublicKey);
+        if (!$verifyResult) {
+            Log::error('三剑支付回调签名验证失败');
+            echo 'fail';
+            return;
+        }
+        
+        // 检查支付状态
+        if (isset($params['code']) && $params['code'] === '0') {
+            // 解析订单号
+            $merchantOrderNo = $params['merchantOrderNo'] ?? '';
+            $parts = explode('-', $merchantOrderNo);
+            if (count($parts) >= 2) {
+                $order_sn = $parts[0];
+                $orderType = $parts[1];
+                
+                $result = $this->hanldNotify($order_sn, $orderType, 'success');
+                echo $result;
+            } else {
+                Log::error('三剑支付回调订单号格式错误: ' . $merchantOrderNo);
+                echo 'fail';
+            }
+        } else {
+            Log::error('三剑支付回调状态异常: ' . json_encode($params));
+            echo 'fail';
+        }
+    }
+    ////////////////////////////// 三剑支付 END //////////////////////////////
     
 }
