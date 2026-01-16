@@ -1389,41 +1389,20 @@ class CollectionMatching extends Command
                                         'update_time' => $now,
                                     ]);
                                 
-                                // 2. 卖家获得收益（扣除手续费）
+                                // 2. 卖家获得收益 - 使用与用户买入相同的逻辑
+                                $itemTitle = $consignment['item_title'] ?? '藏品';
+                                $originalPrice = (float)($consignment['original_price'] ?? $price);
+                                
+                                // 调用统一的收益分配服务（与用户买入寄售逻辑一致）
+                                \app\common\service\core\FinanceService::distributeSellerIncome(
+                                    $sellerId, 
+                                    $price, 
+                                    $originalPrice, 
+                                    $itemTitle, 
+                                    $consignmentId
+                                );
+                                
                                 $sellerIncome = $price - $serviceFee;
-                                if ($sellerIncome > 0) {
-                                    // 50%到可调度收益，50%到消费金
-                                    $toDispatchable = round($sellerIncome * 0.5, 2);
-                                    $toConsumption = $sellerIncome - $toDispatchable;
-                                    
-                                    Db::name('user')->where('id', $sellerId)->inc('balance_available', $toDispatchable)->update();
-                                    Db::name('user')->where('id', $sellerId)->inc('consumption_money', $toConsumption)->update();
-                                    
-                                    // 记录卖家收益日志（显示为正常寄售成交）
-                                    $itemTitle = $consignment['item_title'] ?? '藏品';
-                                    Db::name('user_money_log')->insert([
-                                        'user_id' => $sellerId,
-                                        'field_type' => 'balance_available',
-                                        'money' => $toDispatchable,
-                                        'before' => 0,
-                                        'after' => 0,
-                                        'memo' => "寄售成交收益（可调度）- {$itemTitle}",
-                                        'biz_type' => 'consignment_sold',
-                                        'biz_id' => $consignmentId,
-                                        'create_time' => $now,
-                                    ]);
-                                    Db::name('user_money_log')->insert([
-                                        'user_id' => $sellerId,
-                                        'field_type' => 'consumption_money',
-                                        'money' => $toConsumption,
-                                        'before' => 0,
-                                        'after' => 0,
-                                        'memo' => "寄售成交收益（消费金）- {$itemTitle}",
-                                        'biz_type' => 'consignment_sold',
-                                        'biz_id' => $consignmentId,
-                                        'create_time' => $now,
-                                    ]);
-                                }
                                 
                                 // 3. 更新用户藏品状态为已售出
                                 if ($userCollectionId > 0) {
@@ -1513,40 +1492,20 @@ class CollectionMatching extends Command
                                         'update_time' => $now,
                                     ]);
                                 
-                                // 2. 卖家获得收益
-                                $sellerIncome = $price - $serviceFee;
+                                // 2. 卖家获得收益 - 使用与用户买入相同的逻辑
                                 $itemTitle = $consignment['item_title'] ?? '藏品';
-                                if ($sellerIncome > 0) {
-                                    $toDispatchable = round($sellerIncome * 0.5, 2);
-                                    $toConsumption = $sellerIncome - $toDispatchable;
-                                    
-                                    Db::name('user')->where('id', $sellerId)->inc('balance_available', $toDispatchable)->update();
-                                    Db::name('user')->where('id', $sellerId)->inc('consumption_money', $toConsumption)->update();
-                                    
-                                    // 记录日志（显示为正常寄售成交）
-                                    Db::name('user_money_log')->insert([
-                                        'user_id' => $sellerId,
-                                        'field_type' => 'balance_available',
-                                        'money' => $toDispatchable,
-                                        'before' => 0,
-                                        'after' => 0,
-                                        'memo' => "寄售成交收益（可调度）- {$itemTitle}",
-                                        'biz_type' => 'consignment_sold',
-                                        'biz_id' => $consignmentId,
-                                        'create_time' => $now,
-                                    ]);
-                                    Db::name('user_money_log')->insert([
-                                        'user_id' => $sellerId,
-                                        'field_type' => 'consumption_money',
-                                        'money' => $toConsumption,
-                                        'before' => 0,
-                                        'after' => 0,
-                                        'memo' => "寄售成交收益（消费金）- {$itemTitle}",
-                                        'biz_type' => 'consignment_sold',
-                                        'biz_id' => $consignmentId,
-                                        'create_time' => $now,
-                                    ]);
-                                }
+                                $originalPrice = (float)($consignment['original_price'] ?? $price);
+                                
+                                // 调用统一的收益分配服务（与用户买入寄售逻辑一致）
+                                \app\common\service\core\FinanceService::distributeSellerIncome(
+                                    $sellerId, 
+                                    $price, 
+                                    $originalPrice, 
+                                    $itemTitle, 
+                                    $consignmentId
+                                );
+                                
+                                $sellerIncome = $price - $serviceFee;
                                 
                                 // 3. 更新用户藏品状态
                                 if ($userCollectionId > 0) {
@@ -1951,172 +1910,43 @@ class CollectionMatching extends Command
                         ]);
                     }
                     
-                    // 给卖家发放收益（按本金+利润分配规则）
+                    // 给卖家发放收益 - 使用统一的收益分配服务（与用户买入寄售逻辑一致）
                     if ($sellerId > 0) {
-                        // 获取卖家信息和买入价
-                        $seller = Db::name('user')->where('id', $sellerId)->lock(true)->find();
-                        if ($seller) {
-                            // 查找卖家的买入价（本金）
-                            $ucId = isset($availableConsignment['user_collection_id']) ? (int)$availableConsignment['user_collection_id'] : 0;
-                            if ($ucId > 0) {
-                                $sellerCollection = Db::name('user_collection')->where('id', $ucId)->find();
-                            } else {
-                                $sellerCollection = Db::name('user_collection')
-                                    ->where('user_id', $sellerId)
-                                    ->where('item_id', $itemId)
-                                    ->order('id asc')
-                                    ->find();
-                            }
-                            
-                            $buyPrice = $sellerCollection ? (float)$sellerCollection['price'] : 0;
-                            if ($buyPrice <= 0) {
-                                $buyPrice = $itemPrice; // 兼容处理：如果找不到买入价，使用寄售价作为本金
-                            }
-                            
-                            // 🆕 判断是否是旧资产包（旧资产包不返还手续费）
-                            $isOldAssetPackage = $sellerCollection && (int)($sellerCollection['is_old_asset_package'] ?? 0) === 1;
-                            
-                            // 计算利润
-                            $profit = $itemPrice - $buyPrice;
-                            if ($profit < 0) {
-                                $profit = 0; // 亏损情况：利润为0
-                            }
-                            
-                            // 🆕 新收益分配规则：
-                            // 1. 本金*3%的服务费金额直接到账提现余额（旧资产包不返还）
-                            // 2. 剩余利润（约2%）对半到账提现余额和确权金（service_fee_balance）
-                            
-                            $serviceFeeRate = (float)(get_sys_config('consignment_service_fee_rate') ?? 0.03);
-                            // 旧资产包不返还手续费
-                            $feeRefund = $isOldAssetPackage ? 0 : round($buyPrice * $serviceFeeRate, 2);
-                            
-                            $remainingProfit = max(0, $profit - $feeRefund);
-                            
-                            // 剩余利润拆分（从配置读取）
-                            $splitRate = (float)(get_sys_config('seller_profit_split_rate') ?? 0.5);
-                            if ($splitRate < 0 || $splitRate > 1) {
-                                $splitRate = 0.5;
-                            }
-                            $profitToWithdrawable = round($remainingProfit * $splitRate, 2);
-                            $profitToScore = round($remainingProfit * (1 - $splitRate), 2);
-                            
-                            // 卖家最终提现余额增加 = 本金 + 服务费退还 + 剩余利润的一半
-                            $sellerTotalWithdrawable = $buyPrice + $feeRefund + $profitToWithdrawable;
-                            
-                            // 更新卖家余额
-                            $beforeWithdrawable = (float)$seller['withdrawable_money'];
-                            $beforeScore = (float)$seller['score'];
-                            
-                            $afterWithdrawable = round($beforeWithdrawable + $sellerTotalWithdrawable, 2);
-                            $afterScore = round($beforeScore + $profitToScore, 2);
-                            
-                            Db::name('user')->where('id', $sellerId)->update([
-                                'withdrawable_money' => $afterWithdrawable,
-                                'score' => $afterScore,
-                                'update_time' => $now,
-                            ]);
-                            
-                            // 生成流水号和批次号
-                            $flowNo1 = generateSJSFlowNo($sellerId);
-                            $flowNo2 = generateSJSFlowNo($sellerId);
-                            $flowNo3 = generateSJSFlowNo($sellerId);
-                            while ($flowNo2 === $flowNo1) {
-                                $flowNo2 = generateSJSFlowNo($sellerId);
-                            }
-                            while ($flowNo3 === $flowNo1 || $flowNo3 === $flowNo2) {
-                                $flowNo3 = generateSJSFlowNo($sellerId);
-                            }
-                            $batchNo = generateBatchNo('MATCHING_OFFICIAL_SELLER', $orderId);
-                            
-                            // 记录可提现余额变动日志 - 拆分本金和收益
-                                        
-                            // 1. 本金退回
-                            $logBefore = $beforeWithdrawable;
-                            $logAfter = round($logBefore + $buyPrice, 2);
-                            
-                            Db::name('user_money_log')->insert([
-                                'user_id' => $sellerId,
-                                'flow_no' => $flowNo1,
-                                'batch_no' => $batchNo,
-                                'biz_type' => 'matching_official_seller',
-                                'biz_id' => $orderId,
-                                'field_type' => 'withdrawable_money',
-                                'money' => $buyPrice,
-                                'before' => $logBefore,
-                                'after' => $logAfter,
-                                'memo' => '交易' . $itemInfo['title'] . '成功',
-                                'create_time' => $now,
-                            ]);
-                            
-                            // 2. 收益（费返+提现利润）
-                            $incomePart = round($feeRefund + $profitToWithdrawable, 2);
-                            if ($incomePart > 0) {
-                                $logBefore = $logAfter;
-                                $logAfter = round($logBefore + $incomePart, 2);
-                                
-                                Db::name('user_money_log')->insert([
-                                    'user_id' => $sellerId,
-                                    'flow_no' => $flowNo2,
-                                    'batch_no' => $batchNo,
-                                    'biz_type' => 'matching_official_seller',
-                                    'biz_id' => $orderId,
-                                    'field_type' => 'withdrawable_money',
-                                    'money' => $incomePart,
-                                    'before' => $logBefore,
-                                    'after' => $logAfter,
-                                    'memo' => '【交易收益】' . $itemInfo['title'],
-                                    'create_time' => $now,
-                                ]);
-                            }
-                            
-                            // 如果有确权金收益（消费金），记录到user_score_log表
-                            if ($profitToScore > 0) {
-                                Db::name('user_score_log')->insert([
-                                    'user_id' => $sellerId,
-                                    'flow_no' => $flowNo3,
-                                    'batch_no' => $batchNo,
-                                    'biz_type' => 'matching_official_seller',
-                                    'biz_id' => $orderId,
-                                    'user_collection_id' => $ucId,
-                                    'item_id' => $itemId,
-                                    'title_snapshot' => $itemInfo['title'],
-                                    'image_snapshot' => $itemInfo['image'] ?? '',
-                                    'score' => $profitToScore,
-                                    'before' => $beforeScore,
-                                    'after' => $afterScore,
-                                    'memo' => '【确权收益】' . $itemInfo['title'],
-                                    'create_time' => $now,
-                                ]);
-                            }
-                            
-                            // 记录活动日志
-                            Db::name('user_activity_log')->insert([
-                                'user_id' => $sellerId,
-                                'related_user_id' => $userId,
-                                'action_type' => 'consignment_income',
-                                'change_field' => 'withdrawable_money,score',
-                                'change_value' => json_encode([
-                                    'withdrawable_money' => $sellerTotalWithdrawable,
-                                    'score' => $profitToScore,
-                                ], JSON_UNESCAPED_UNICODE),
-                                'before_value' => json_encode([
-                                    'withdrawable_money' => $beforeWithdrawable,
-                                    'score' => $beforeScore,
-                                ], JSON_UNESCAPED_UNICODE),
-                                'after_value' => json_encode([
-                                    'withdrawable_money' => $afterWithdrawable,
-                                    'score' => $afterScore,
-                                ], JSON_UNESCAPED_UNICODE),
-                                'remark' => sprintf('卖出:%s. 本金:%.2f. 提现收益:%.2f. 确权收益:%.2f', 
-                                    $itemInfo['title'], $buyPrice, $incomePart, $profitToScore),
-                                'create_time' => $now,
-                                'update_time' => $now,
-                            ]);
-                            
-                            // 代理佣金分配（如果有利润）
-                            if ($profit > 0) {
-                                $this->distributeAgentCommission($sellerId, $profit, $itemInfo['title'], 0, $orderNo, $orderId, $now, $output);
-                            }
+                        // 获取卖家的买入价（本金）
+                        $ucId = isset($availableConsignment['user_collection_id']) ? (int)$availableConsignment['user_collection_id'] : 0;
+                        if ($ucId > 0) {
+                            $sellerCollection = Db::name('user_collection')->where('id', $ucId)->find();
+                        } else {
+                            $sellerCollection = Db::name('user_collection')
+                                ->where('user_id', $sellerId)
+                                ->where('item_id', $itemId)
+                                ->order('id asc')
+                                ->find();
+                        }
+                        
+                        $buyPrice = $sellerCollection ? (float)$sellerCollection['price'] : 0;
+                        if ($buyPrice <= 0) {
+                            $buyPrice = $itemPrice; // 兼容处理：如果找不到买入价，使用寄售价作为本金
+                        }
+                        
+                        // 获取寄售单ID（用于结算快照）
+                        $consignmentId = isset($availableConsignment['id']) ? (int)$availableConsignment['id'] : null;
+                        
+                        // 调用统一的收益分配服务（与用户买入寄售逻辑一致）
+                        $distributeResult = \app\common\service\core\FinanceService::distributeSellerIncome(
+                            $sellerId, 
+                            $itemPrice,  // 成交价
+                            $buyPrice,   // 本金（买入价）
+                            $itemInfo['title'], 
+                            $consignmentId
+                        );
+                        
+                        // 计算利润用于代理佣金分配
+                        $profit = max(0, $itemPrice - $buyPrice);
+                        
+                        // 代理佣金分配（如果有利润）
+                        if ($profit > 0) {
+                            $this->distributeAgentCommission($sellerId, $profit, $itemInfo['title'], 0, $orderNo, $orderId, $now, $output);
                         }
                     }
                     
