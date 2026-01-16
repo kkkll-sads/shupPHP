@@ -44,7 +44,11 @@ class Frontend extends Api
 
             // 初始化会员鉴权实例
             $this->auth = Auth::instance();
-            $token      = get_auth_token(['ba', 'user', 'token']);
+            // 支持两种token格式：bausertoken 和 batoken
+            $token = get_auth_token(['ba', 'user', 'token']);
+            if (!$token) {
+                $token = get_auth_token(['ba', 'token']); // 兼容 batoken
+            }
             if ($token) $this->auth->init($token);
 
         } catch (TokenExpirationException) {
