@@ -134,9 +134,10 @@ class UserService
 
                 // 首次交易奖励上级（邀请人）
                 if ($result['new_user_type'] == 1) {
-                    // 奖励上级
-                    if ($user['pid'] > 0) {
-                        self::rewardInviterOnSubordinateFirstTrade($user['pid'], $userId, $now);
+                    // 奖励上级（使用 inviter_id 字段）
+                    $inviterId = (int)($user['inviter_id'] ?? 0);
+                    if ($inviterId > 0) {
+                        self::rewardInviterOnSubordinateFirstTrade($inviterId, $userId, $now);
                     }
                     // 奖励自己
                     self::rewardFirstTrade($userId, $now);
