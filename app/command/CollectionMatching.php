@@ -2137,7 +2137,9 @@ class CollectionMatching extends Command
                     ]);
                     
                     // 检查并升级用户等级，交易用户发放场次+区间绑定寄售券
-                    $upgradeResult = UserService::checkAndUpgradeUserAfterPurchase($userId, $sessionId, $zoneId);
+                    // 🔧 修复：使用藏品实际zone_id而非预约记录的zone_id（藏品增值后可能跨区）
+                    $actualZoneId = (int)($itemInfo['zone_id'] ?? $zoneId);
+                    $upgradeResult = UserService::checkAndUpgradeUserAfterPurchase($userId, $sessionId, $actualZoneId);
                     if ($upgradeResult['upgraded']) {
                         $upgradeMsg = $upgradeResult['new_user_type'] == 2 
                             ? "用户升级为交易用户" 
@@ -2145,7 +2147,7 @@ class CollectionMatching extends Command
                         $output->writeln("  ✓ {$upgradeMsg}");
                     }
                     if ($upgradeResult['coupon_issued']) {
-                        $output->writeln("  ✓ 发放寄售券：场次#{$sessionId}，区间#{$zoneId}");
+                        $output->writeln("  ✓ 发放寄售券：场次#{$sessionId}，区间#{$actualZoneId}");
                     }
 
                     Db::commit();
