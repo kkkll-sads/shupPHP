@@ -1387,7 +1387,6 @@ class CollectionMatching extends Command
                                         'sold_price' => $price,
                                         'sold_time' => $now,
                                         'update_time' => $now,
-                                        'remark' => '撮合成交',
                                     ]);
                                 
                                 // 2. 卖家获得收益（扣除手续费）
@@ -1512,7 +1511,6 @@ class CollectionMatching extends Command
                                         'sold_price' => $price,
                                         'sold_time' => $now,
                                         'update_time' => $now,
-                                        'remark' => '撮合成交',
                                     ]);
                                 
                                 // 2. 卖家获得收益
