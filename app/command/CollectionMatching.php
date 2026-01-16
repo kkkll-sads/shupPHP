@@ -1201,16 +1201,16 @@ class CollectionMatching extends Command
                 // ========== 🆕 自动平衡：确保100%成功率 ==========
                 $output->writeln("  🔄 开始自动平衡检查（确保100%成功率）...");
                 
-                // 按资产包统计申购数量
+                // 按资产包+价格分区统计申购数量
                 $applyByPackage = Db::name('trade_reservations')
                     ->where('session_id', $sessionId)
                     ->where('status', 0)
-                    ->field('package_id, zone_id, COUNT(*) as apply_count, SUM(freeze_amount) as total_freeze')
+                    ->field('package_id, zone_id, COUNT(*) as apply_count, AVG(freeze_amount) as avg_freeze')
                     ->group('package_id, zone_id')
                     ->select()
                     ->toArray();
                 
-                // 按资产包统计寄售数量
+                // 按资产包+价格分区统计寄售数量
                 $consignByPackage = Db::name('collection_consignment')
                     ->alias('c')
                     ->join('collection_item ci', 'c.item_id = ci.id')
@@ -1221,62 +1221,113 @@ class CollectionMatching extends Command
                     ->select()
                     ->toArray();
                 
-                // 转换为关联数组方便查找
+                // 按资产包+价格分区统计系统库存数量（stock > 0）
+                $stockByPackage = Db::name('collection_item')
+                    ->where('session_id', $sessionId)
+                    ->where('status', 1)
+                    ->where('stock', '>', 0)
+                    ->field('package_id, zone_id, SUM(stock) as stock_count')
+                    ->group('package_id, zone_id')
+                    ->select()
+                    ->toArray();
+                
+                // 转换为关联数组
                 $consignMap = [];
                 foreach ($consignByPackage as $c) {
                     $key = $c['package_id'] . '_' . $c['zone_id'];
                     $consignMap[$key] = (int)$c['consign_count'];
                 }
                 
+                $stockMap = [];
+                foreach ($stockByPackage as $s) {
+                    $key = $s['package_id'] . '_' . $s['zone_id'];
+                    $stockMap[$key] = (int)$s['stock_count'];
+                }
+                
                 $autoSupplyCount = 0;
-                $autoRecycleCount = 0;
+                $autoBuyCount = 0;
                 
                 foreach ($applyByPackage as $apply) {
                     $packageId = (int)$apply['package_id'];
                     $zoneId = (int)$apply['zone_id'];
                     $applyCount = (int)$apply['apply_count'];
+                    $avgFreeze = (float)$apply['avg_freeze'];
                     $key = $packageId . '_' . $zoneId;
                     $consignCount = $consignMap[$key] ?? 0;
+                    $stockCount = $stockMap[$key] ?? 0;
+                    
+                    // 可用总量 = 系统库存 + 寄售数量
+                    $totalAvailable = $stockCount + $consignCount;
                     
                     $packageName = Db::name('asset_package')->where('id', $packageId)->value('name') ?: "包#{$packageId}";
                     $zoneName = Db::name('price_zone_config')->where('id', $zoneId)->value('name') ?: "区#{$zoneId}";
                     
-                    if ($applyCount > $consignCount) {
-                        // 申购 > 寄售：需要自动补充
-                        $needSupply = $applyCount - $consignCount;
-                        $output->writeln("    📥 【{$packageName}】【{$zoneName}】申购{$applyCount} > 寄售{$consignCount}，需补充 {$needSupply} 件");
+                    $output->writeln("    📊 【{$packageName}】【{$zoneName}】申购:{$applyCount} | 系统库存:{$stockCount} | 寄售:{$consignCount} | 可用总量:{$totalAvailable}");
+                    
+                    // 情况1：申购 > 可用藏品总量 => 需要自动补充藏品
+                    if ($applyCount > $totalAvailable) {
+                        $needSupply = $applyCount - $totalAvailable;
+                        $output->writeln("      📥 申购{$applyCount} > 可用{$totalAvailable}，需补充 {$needSupply} 件藏品");
                         
-                        // 从系统库存补充（stock > 0 的商品）
-                        $systemItems = Db::name('collection_item')
+                        // 获取参考商品来复制属性
+                        $refItem = Db::name('collection_item')
                             ->where('session_id', $sessionId)
                             ->where('package_id', $packageId)
                             ->where('zone_id', $zoneId)
-                            ->where('status', 1)
-                            ->where('stock', '>', 0)
-                            ->select()
-                            ->toArray();
+                            ->order('id desc')
+                            ->find();
                         
-                        $suppliedCount = 0;
-                        foreach ($systemItems as $item) {
-                            if ($suppliedCount >= $needSupply) break;
-                            $canSupply = min((int)$item['stock'], $needSupply - $suppliedCount);
-                            $suppliedCount += $canSupply;
-                        }
-                        
-                        if ($suppliedCount >= $needSupply) {
-                            $output->writeln("      ✅ 系统库存充足，可补充 {$suppliedCount} 件");
-                            $autoSupplyCount += $suppliedCount;
+                        if ($refItem) {
+                            $packageInfo = Db::name('asset_package')->where('id', $packageId)->find();
+                            
+                            for ($i = 0; $i < $needSupply; $i++) {
+                                // 生成唯一资产编号
+                                $timestamp = (int)(microtime(true) * 1000);
+                                $newAssetCode = $packageId . '-SYS-' . str_pad($packageId, 4, '0', STR_PAD_LEFT) . '-' . $timestamp . rand(100, 999);
+                                
+                                $newItemData = [
+                                    'session_id' => $sessionId,
+                                    'package_name' => $packageInfo['name'] ?? $refItem['package_name'],
+                                    'title' => $packageInfo['name'] ?? $refItem['title'],
+                                    'image' => $refItem['image'],
+                                    'images' => $refItem['images'],
+                                    'price' => $avgFreeze,
+                                    'issue_price' => $avgFreeze,
+                                    'price_zone' => $refItem['price_zone'],
+                                    'description' => '系统自动补充库存',
+                                    'asset_anchor' => '',
+                                    'artist' => '',
+                                    'stock' => 1,
+                                    'sales' => 0,
+                                    'status' => 1,
+                                    'is_physical' => 0,
+                                    'sort' => 0,
+                                    'create_time' => $now,
+                                    'update_time' => $now,
+                                    'asset_code' => $newAssetCode,
+                                    'tx_hash' => '0x' . md5(uniqid() . microtime(true) . $i),
+                                    'owner_id' => 0, // 系统所有
+                                    'zone_id' => $zoneId,
+                                    'package_id' => $packageId,
+                                ];
+                                
+                                $newId = Db::name('collection_item')->insertGetId($newItemData);
+                                $output->writeln("        ✨ 创建藏品 ID:{$newId}，价格:{$avgFreeze}，编号:{$newAssetCode}");
+                                $autoSupplyCount++;
+                                
+                                usleep(1000); // 防止时间戳重复
+                            }
                         } else {
-                            $output->writeln("      ⚠️ 系统库存不足，只能补充 {$suppliedCount}/{$needSupply} 件");
-                            $autoSupplyCount += $suppliedCount;
+                            $output->writeln("        ❌ 无法创建藏品：找不到参考商品");
                         }
+                    }
+                    
+                    // 情况2：寄售 > 申购 => 系统模拟申购买入多余的寄售
+                    if ($consignCount > $applyCount) {
+                        $needBuy = $consignCount - $applyCount;
+                        $output->writeln("      🛒 寄售{$consignCount} > 申购{$applyCount}，系统将买入 {$needBuy} 件");
                         
-                    } elseif ($consignCount > $applyCount) {
-                        // 寄售 > 申购：自动回收多余寄售
-                        $needRecycle = $consignCount - $applyCount;
-                        $output->writeln("    📤 【{$packageName}】【{$zoneName}】寄售{$consignCount} > 申购{$applyCount}，需回收 {$needRecycle} 件");
-                        
-                        // 按时间倒序获取多余的寄售商品（最晚寄售的优先回收）
+                        // 获取多余的寄售商品（按价格从低到高，优先买便宜的）
                         $excessConsignments = Db::name('collection_consignment')
                             ->alias('c')
                             ->join('collection_item ci', 'c.item_id = ci.id')
@@ -1284,80 +1335,121 @@ class CollectionMatching extends Command
                             ->where('c.package_id', $packageId)
                             ->where('ci.zone_id', $zoneId)
                             ->where('ci.session_id', $sessionId)
-                            ->order('c.create_time desc')
-                            ->limit($needRecycle)
-                            ->field('c.*')
+                            ->order('c.price asc, c.create_time asc')
+                            ->limit($needBuy)
+                            ->field('c.*, ci.title as item_title')
                             ->select()
                             ->toArray();
                         
-                        foreach ($excessConsignments as $excess) {
-                            // 系统回收：将寄售状态改为"已回收"，退还本金给卖家
+                        foreach ($excessConsignments as $consignment) {
                             Db::startTrans();
                             try {
-                                $consignmentId = (int)$excess['id'];
-                                $sellerId = (int)$excess['user_id'];
-                                $price = (float)$excess['price'];
-                                $userCollectionId = (int)($excess['user_collection_id'] ?? 0);
+                                $consignmentId = (int)$consignment['id'];
+                                $sellerId = (int)$consignment['user_id'];
+                                $itemId = (int)$consignment['item_id'];
+                                $price = (float)$consignment['price'];
+                                $userCollectionId = (int)($consignment['user_collection_id'] ?? 0);
+                                $serviceFee = (float)($consignment['service_fee'] ?? 0);
                                 
-                                // 更新寄售状态为已回收（status=5）
+                                // 1. 更新寄售状态为已售出
                                 Db::name('collection_consignment')
                                     ->where('id', $consignmentId)
                                     ->update([
-                                        'status' => 5, // 已回收
+                                        'status' => 2, // 已售出
+                                        'sold_price' => $price,
+                                        'sold_time' => $now,
                                         'update_time' => $now,
-                                        'remark' => '系统自动回收（申购不足）',
+                                        'remark' => '系统自动买入（消化多余寄售）',
                                     ]);
                                 
-                                // 恢复用户藏品持有状态
+                                // 2. 卖家获得收益（扣除手续费）
+                                $sellerIncome = $price - $serviceFee;
+                                if ($sellerIncome > 0) {
+                                    // 50%到可调度收益，50%到消费金
+                                    $toDispatchable = round($sellerIncome * 0.5, 2);
+                                    $toConsumption = $sellerIncome - $toDispatchable;
+                                    
+                                    Db::name('user')->where('id', $sellerId)->inc('balance_available', $toDispatchable)->update();
+                                    Db::name('user')->where('id', $sellerId)->inc('consumption_money', $toConsumption)->update();
+                                    
+                                    // 记录卖家收益日志
+                                    Db::name('user_money_log')->insert([
+                                        'user_id' => $sellerId,
+                                        'money' => $toDispatchable,
+                                        'before' => 0, // 简化处理
+                                        'after' => 0,
+                                        'type' => 'consignment_income',
+                                        'remark' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
+                                        'create_time' => $now,
+                                    ]);
+                                    Db::name('user_money_log')->insert([
+                                        'user_id' => $sellerId,
+                                        'money' => $toConsumption,
+                                        'before' => 0,
+                                        'after' => 0,
+                                        'type' => 'consignment_income_consumption',
+                                        'remark' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
+                                        'create_time' => $now,
+                                    ]);
+                                }
+                                
+                                // 3. 更新用户藏品状态为已售出
                                 if ($userCollectionId > 0) {
                                     Db::name('user_collection')
                                         ->where('id', $userCollectionId)
                                         ->update([
-                                            'status' => 1, // 恢复为正常持有
+                                            'consignment_status' => 2, // 已售出
                                             'update_time' => $now,
                                         ]);
                                 }
                                 
-                                // 记录回收日志
+                                // 4. 藏品回归系统库存
+                                Db::name('collection_item')
+                                    ->where('id', $itemId)
+                                    ->update([
+                                        'owner_id' => 0,
+                                        'stock' => 1,
+                                        'update_time' => $now,
+                                    ]);
+                                
+                                // 5. 记录日志
                                 Db::name('user_activity_log')->insert([
                                     'user_id' => $sellerId,
                                     'related_user_id' => 0,
-                                    'action_type' => 'consignment_recycled',
+                                    'action_type' => 'consignment_system_buy',
                                     'change_field' => 'consignment_status',
-                                    'change_value' => '5',
+                                    'change_value' => '2',
                                     'before_value' => '1',
-                                    'after_value' => '5',
-                                    'remark' => "系统自动回收寄售（申购不足），寄售ID: {$consignmentId}",
+                                    'after_value' => '2',
+                                    'remark' => "系统买入寄售藏品，寄售ID:{$consignmentId}，价格:{$price}，收益:{$sellerIncome}",
                                     'create_time' => $now,
                                     'update_time' => $now,
                                 ]);
                                 
                                 Db::commit();
-                                $autoRecycleCount++;
-                                $output->writeln("      ✅ 已回收寄售ID {$consignmentId}（卖家ID {$sellerId}）");
+                                $autoBuyCount++;
+                                $output->writeln("        ✅ 系统买入寄售ID:{$consignmentId}（卖家:{$sellerId}，价格:{$price}，收益:{$sellerIncome}）");
                                 
                             } catch (\Throwable $e) {
                                 Db::rollback();
-                                $output->writeln("      ❌ 回收失败：" . $e->getMessage());
+                                $output->writeln("        ❌ 买入失败：" . $e->getMessage());
                             }
                         }
-                    } else {
-                        $output->writeln("    ✅ 【{$packageName}】【{$zoneName}】供需平衡：申购{$applyCount} = 寄售{$consignCount}");
                     }
                     
                     // 从map中移除已处理的
                     unset($consignMap[$key]);
                 }
                 
-                // 处理只有寄售没有申购的情况
+                // 处理只有寄售没有申购的情况 => 系统全部买入
                 foreach ($consignMap as $key => $consignCount) {
                     if ($consignCount > 0) {
                         list($packageId, $zoneId) = explode('_', $key);
                         $packageName = Db::name('asset_package')->where('id', $packageId)->value('name') ?: "包#{$packageId}";
                         $zoneName = Db::name('price_zone_config')->where('id', $zoneId)->value('name') ?: "区#{$zoneId}";
-                        $output->writeln("    📤 【{$packageName}】【{$zoneName}】只有寄售{$consignCount}无申购，需全部回收");
+                        $output->writeln("    🛒 【{$packageName}】【{$zoneName}】只有寄售{$consignCount}无申购，系统全部买入");
                         
-                        // 回收所有寄售
+                        // 获取所有寄售
                         $allConsignments = Db::name('collection_consignment')
                             ->alias('c')
                             ->join('collection_item ci', 'c.item_id = ci.id')
@@ -1365,60 +1457,106 @@ class CollectionMatching extends Command
                             ->where('c.package_id', $packageId)
                             ->where('ci.zone_id', $zoneId)
                             ->where('ci.session_id', $sessionId)
-                            ->field('c.*')
+                            ->field('c.*, ci.title as item_title')
                             ->select()
                             ->toArray();
                         
-                        foreach ($allConsignments as $excess) {
+                        foreach ($allConsignments as $consignment) {
                             Db::startTrans();
                             try {
-                                $consignmentId = (int)$excess['id'];
-                                $sellerId = (int)$excess['user_id'];
-                                $userCollectionId = (int)($excess['user_collection_id'] ?? 0);
+                                $consignmentId = (int)$consignment['id'];
+                                $sellerId = (int)$consignment['user_id'];
+                                $itemId = (int)$consignment['item_id'];
+                                $price = (float)$consignment['price'];
+                                $userCollectionId = (int)($consignment['user_collection_id'] ?? 0);
+                                $serviceFee = (float)($consignment['service_fee'] ?? 0);
                                 
+                                // 1. 更新寄售状态为已售出
                                 Db::name('collection_consignment')
                                     ->where('id', $consignmentId)
                                     ->update([
-                                        'status' => 5,
+                                        'status' => 2,
+                                        'sold_price' => $price,
+                                        'sold_time' => $now,
                                         'update_time' => $now,
-                                        'remark' => '系统自动回收（无申购）',
+                                        'remark' => '系统自动买入（无申购）',
                                     ]);
                                 
+                                // 2. 卖家获得收益
+                                $sellerIncome = $price - $serviceFee;
+                                if ($sellerIncome > 0) {
+                                    $toDispatchable = round($sellerIncome * 0.5, 2);
+                                    $toConsumption = $sellerIncome - $toDispatchable;
+                                    
+                                    Db::name('user')->where('id', $sellerId)->inc('balance_available', $toDispatchable)->update();
+                                    Db::name('user')->where('id', $sellerId)->inc('consumption_money', $toConsumption)->update();
+                                    
+                                    Db::name('user_money_log')->insert([
+                                        'user_id' => $sellerId,
+                                        'money' => $toDispatchable,
+                                        'before' => 0,
+                                        'after' => 0,
+                                        'type' => 'consignment_income',
+                                        'remark' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
+                                        'create_time' => $now,
+                                    ]);
+                                    Db::name('user_money_log')->insert([
+                                        'user_id' => $sellerId,
+                                        'money' => $toConsumption,
+                                        'before' => 0,
+                                        'after' => 0,
+                                        'type' => 'consignment_income_consumption',
+                                        'remark' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
+                                        'create_time' => $now,
+                                    ]);
+                                }
+                                
+                                // 3. 更新用户藏品状态
                                 if ($userCollectionId > 0) {
                                     Db::name('user_collection')
                                         ->where('id', $userCollectionId)
                                         ->update([
-                                            'status' => 1,
+                                            'consignment_status' => 2,
                                             'update_time' => $now,
                                         ]);
                                 }
                                 
+                                // 4. 藏品回归系统库存
+                                Db::name('collection_item')
+                                    ->where('id', $itemId)
+                                    ->update([
+                                        'owner_id' => 0,
+                                        'stock' => 1,
+                                        'update_time' => $now,
+                                    ]);
+                                
+                                // 5. 记录日志
                                 Db::name('user_activity_log')->insert([
                                     'user_id' => $sellerId,
                                     'related_user_id' => 0,
-                                    'action_type' => 'consignment_recycled',
+                                    'action_type' => 'consignment_system_buy',
                                     'change_field' => 'consignment_status',
-                                    'change_value' => '5',
+                                    'change_value' => '2',
                                     'before_value' => '1',
-                                    'after_value' => '5',
-                                    'remark' => "系统自动回收寄售（无申购），寄售ID: {$consignmentId}",
+                                    'after_value' => '2',
+                                    'remark' => "系统买入寄售藏品（无申购），寄售ID:{$consignmentId}，价格:{$price}",
                                     'create_time' => $now,
                                     'update_time' => $now,
                                 ]);
                                 
                                 Db::commit();
-                                $autoRecycleCount++;
-                                $output->writeln("      ✅ 已回收寄售ID {$consignmentId}（卖家ID {$sellerId}）");
+                                $autoBuyCount++;
+                                $output->writeln("        ✅ 系统买入寄售ID:{$consignmentId}（卖家:{$sellerId}，价格:{$price}）");
                                 
                             } catch (\Throwable $e) {
                                 Db::rollback();
-                                $output->writeln("      ❌ 回收失败：" . $e->getMessage());
+                                $output->writeln("        ❌ 买入失败：" . $e->getMessage());
                             }
                         }
                     }
                 }
                 
-                $output->writeln("  🔄 自动平衡完成：补充 {$autoSupplyCount} 件，回收 {$autoRecycleCount} 件");
+                $output->writeln("  🔄 自动平衡完成：补充藏品 {$autoSupplyCount} 件，系统买入 {$autoBuyCount} 件");
                 // ========== 自动平衡结束 ==========
 
                 // 2. 遍历该场次的所有有效预约（status=0:待撮合）
