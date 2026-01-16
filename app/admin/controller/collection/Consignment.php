@@ -17,7 +17,7 @@ class Consignment extends Backend
      */
     protected object $model;
 
-    protected string|array $quickSearchField = ['id', 'package_name'];
+    protected string|array $quickSearchField = ['id', 'package_name', 'user.mobile', 'user.username'];
 
     protected array $withJoinTable = ['user', 'item'];
 
