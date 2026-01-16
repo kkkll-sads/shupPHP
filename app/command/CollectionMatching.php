@@ -1359,7 +1359,7 @@ class CollectionMatching extends Command
                                         'sold_price' => $price,
                                         'sold_time' => $now,
                                         'update_time' => $now,
-                                        'remark' => '系统自动买入（消化多余寄售）',
+                                        'remark' => '撮合成交',
                                     ]);
                                 
                                 // 2. 卖家获得收益（扣除手续费）
@@ -1372,15 +1372,16 @@ class CollectionMatching extends Command
                                     Db::name('user')->where('id', $sellerId)->inc('balance_available', $toDispatchable)->update();
                                     Db::name('user')->where('id', $sellerId)->inc('consumption_money', $toConsumption)->update();
                                     
-                                    // 记录卖家收益日志
+                                    // 记录卖家收益日志（显示为正常寄售成交）
+                                    $itemTitle = $consignment['item_title'] ?? '藏品';
                                     Db::name('user_money_log')->insert([
                                         'user_id' => $sellerId,
                                         'field_type' => 'balance_available',
                                         'money' => $toDispatchable,
                                         'before' => 0,
                                         'after' => 0,
-                                        'memo' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
-                                        'biz_type' => 'system_buy_consignment',
+                                        'memo' => "寄售成交收益（可调度）- {$itemTitle}",
+                                        'biz_type' => 'consignment_sold',
                                         'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
@@ -1390,8 +1391,8 @@ class CollectionMatching extends Command
                                         'money' => $toConsumption,
                                         'before' => 0,
                                         'after' => 0,
-                                        'memo' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
-                                        'biz_type' => 'system_buy_consignment',
+                                        'memo' => "寄售成交收益（消费金）- {$itemTitle}",
+                                        'biz_type' => 'consignment_sold',
                                         'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
@@ -1416,16 +1417,16 @@ class CollectionMatching extends Command
                                         'update_time' => $now,
                                     ]);
                                 
-                                // 5. 记录日志
+                                // 5. 记录日志（显示为正常寄售成交，用户不可见系统操作）
                                 Db::name('user_activity_log')->insert([
                                     'user_id' => $sellerId,
                                     'related_user_id' => 0,
-                                    'action_type' => 'consignment_system_buy',
+                                    'action_type' => 'consignment_sold',
                                     'change_field' => 'balance_available',
                                     'change_value' => $sellerIncome,
                                     'before_value' => 0,
                                     'after_value' => $sellerIncome,
-                                    'remark' => "系统买入寄售藏品，寄售ID:{$consignmentId}，价格:{$price}，收益:{$sellerIncome}",
+                                    'remark' => "寄售成交 - {$itemTitle}，成交价:{$price}",
                                     'create_time' => $now,
                                     'update_time' => $now,
                                 ]);
@@ -1483,11 +1484,12 @@ class CollectionMatching extends Command
                                         'sold_price' => $price,
                                         'sold_time' => $now,
                                         'update_time' => $now,
-                                        'remark' => '系统自动买入（无申购）',
+                                        'remark' => '撮合成交',
                                     ]);
                                 
                                 // 2. 卖家获得收益
                                 $sellerIncome = $price - $serviceFee;
+                                $itemTitle = $consignment['item_title'] ?? '藏品';
                                 if ($sellerIncome > 0) {
                                     $toDispatchable = round($sellerIncome * 0.5, 2);
                                     $toConsumption = $sellerIncome - $toDispatchable;
@@ -1495,14 +1497,15 @@ class CollectionMatching extends Command
                                     Db::name('user')->where('id', $sellerId)->inc('balance_available', $toDispatchable)->update();
                                     Db::name('user')->where('id', $sellerId)->inc('consumption_money', $toConsumption)->update();
                                     
+                                    // 记录日志（显示为正常寄售成交）
                                     Db::name('user_money_log')->insert([
                                         'user_id' => $sellerId,
                                         'field_type' => 'balance_available',
                                         'money' => $toDispatchable,
                                         'before' => 0,
                                         'after' => 0,
-                                        'memo' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
-                                        'biz_type' => 'system_buy_consignment',
+                                        'memo' => "寄售成交收益（可调度）- {$itemTitle}",
+                                        'biz_type' => 'consignment_sold',
                                         'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
@@ -1512,8 +1515,8 @@ class CollectionMatching extends Command
                                         'money' => $toConsumption,
                                         'before' => 0,
                                         'after' => 0,
-                                        'memo' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
-                                        'biz_type' => 'system_buy_consignment',
+                                        'memo' => "寄售成交收益（消费金）- {$itemTitle}",
+                                        'biz_type' => 'consignment_sold',
                                         'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
@@ -1538,16 +1541,16 @@ class CollectionMatching extends Command
                                         'update_time' => $now,
                                     ]);
                                 
-                                // 5. 记录日志
+                                // 5. 记录日志（显示为正常寄售成交）
                                 Db::name('user_activity_log')->insert([
                                     'user_id' => $sellerId,
                                     'related_user_id' => 0,
-                                    'action_type' => 'consignment_system_buy',
+                                    'action_type' => 'consignment_sold',
                                     'change_field' => 'balance_available',
                                     'change_value' => $sellerIncome,
                                     'before_value' => 0,
                                     'after_value' => $sellerIncome,
-                                    'remark' => "系统买入寄售藏品（无申购），寄售ID:{$consignmentId}，价格:{$price}",
+                                    'remark' => "寄售成交 - {$itemTitle}，成交价:{$price}",
                                     'create_time' => $now,
                                     'update_time' => $now,
                                 ]);
