@@ -37,7 +37,15 @@ class TradeService
             'failed' => 0,
             'refunded' => 0,
             'off_shelf' => 0,
+            'auto_supplied' => 0, // 自动补充的藏品数量
         ];
+
+        // 0. 自动补充库存（在撮合前执行）
+        $autoSupplyCount = self::autoSupplyItems($sessionId, $packageId, $zoneId);
+        $stats['auto_supplied'] = $autoSupplyCount;
+        if ($autoSupplyCount > 0) {
+            Log::info("TradeService::matchPool - Auto supplied {$autoSupplyCount} items for session {$sessionId}");
+        }
 
         // 1. 获取该场次所有待撮合的买单
         $buyQuery = Db::name('collection_matching_pool')

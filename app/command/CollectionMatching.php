@@ -1205,7 +1205,7 @@ class CollectionMatching extends Command
                 $applyByPackage = Db::name('trade_reservations')
                     ->where('session_id', $sessionId)
                     ->where('status', 0)
-                    ->field('package_id, zone_id, COUNT(*) as apply_count, AVG(freeze_amount) as avg_freeze')
+                    ->field('package_id, zone_id, COUNT(*) as apply_count, AVG(freeze_amount) as avg_freeze, MIN(freeze_amount) as min_freeze, MAX(freeze_amount) as max_freeze')
                     ->group('package_id, zone_id')
                     ->select()
                     ->toArray();
@@ -1252,6 +1252,8 @@ class CollectionMatching extends Command
                     $zoneId = (int)$apply['zone_id'];
                     $applyCount = (int)$apply['apply_count'];
                     $avgFreeze = (float)$apply['avg_freeze'];
+                    $minFreeze = (float)($apply['min_freeze'] ?? $avgFreeze);
+                    $maxFreeze = (float)($apply['max_freeze'] ?? $avgFreeze);
                     $key = $packageId . '_' . $zoneId;
                     $consignCount = $consignMap[$key] ?? 0;
                     $stockCount = $stockMap[$key] ?? 0;
@@ -1269,7 +1271,12 @@ class CollectionMatching extends Command
                         $needSupply = $applyCount - $totalAvailable;
                         $output->writeln("      📥 申购{$applyCount} > 可用{$totalAvailable}，需补充 {$needSupply} 件藏品");
                         
-                        // 获取参考商品来复制属性
+                        // 🔧 修复：使用最小冻结金额作为价格，确保所有用户都能匹配
+                        // 因为撮合逻辑要求 price <= freezeAmount，所以补充的藏品价格必须 <= 所有用户的冻结金额
+                        $supplyPrice = $minFreeze;
+                        $output->writeln("      💰 补充藏品价格: {$supplyPrice} (最小冻结金额，确保所有用户可匹配)");
+                        
+                        // 获取参考商品来复制属性（优先找同分区，找不到则找同资产包，再找不到则找同场次）
                         $refItem = Db::name('collection_item')
                             ->where('session_id', $sessionId)
                             ->where('package_id', $packageId)
@@ -1277,8 +1284,29 @@ class CollectionMatching extends Command
                             ->order('id desc')
                             ->find();
                         
+                        // 如果找不到同分区的，尝试找同资产包的其他分区
+                        if (!$refItem) {
+                            $refItem = Db::name('collection_item')
+                                ->where('session_id', $sessionId)
+                                ->where('package_id', $packageId)
+                                ->order('id desc')
+                                ->find();
+                        }
+                        
+                        // 如果还是找不到，尝试找同场次的其他资产包
+                        if (!$refItem) {
+                            $refItem = Db::name('collection_item')
+                                ->where('session_id', $sessionId)
+                                ->order('id desc')
+                                ->find();
+                        }
+                        
                         if ($refItem) {
                             $packageInfo = Db::name('asset_package')->where('id', $packageId)->find();
+                            
+                            // 获取分区信息（用于设置 price_zone）
+                            $zoneInfo = Db::name('price_zone_config')->where('id', $zoneId)->find();
+                            $priceZone = $zoneInfo['name'] ?? $refItem['price_zone'] ?? '';
                             
                             for ($i = 0; $i < $needSupply; $i++) {
                                 // 生成唯一资产编号
@@ -1287,13 +1315,13 @@ class CollectionMatching extends Command
                                 
                                 $newItemData = [
                                     'session_id' => $sessionId,
-                                    'package_name' => $packageInfo['name'] ?? $refItem['package_name'],
-                                    'title' => $packageInfo['name'] ?? $refItem['title'],
-                                    'image' => $refItem['image'],
-                                    'images' => $refItem['images'],
-                                    'price' => $avgFreeze,
-                                    'issue_price' => $avgFreeze,
-                                    'price_zone' => $refItem['price_zone'],
+                                    'package_name' => $packageInfo['name'] ?? $refItem['package_name'] ?? "资产包#{$packageId}",
+                                    'title' => $packageInfo['name'] ?? $refItem['title'] ?? "资产包#{$packageId}",
+                                    'image' => $refItem['image'] ?? '',
+                                    'images' => $refItem['images'] ?? '',
+                                    'price' => $supplyPrice, // 🔧 修复：使用最小冻结金额，确保所有用户都能匹配
+                                    'issue_price' => $supplyPrice,
+                                    'price_zone' => $priceZone,
                                     'description' => '系统自动补充库存',
                                     'asset_anchor' => '',
                                     'artist' => '',
@@ -1312,13 +1340,13 @@ class CollectionMatching extends Command
                                 ];
                                 
                                 $newId = Db::name('collection_item')->insertGetId($newItemData);
-                                $output->writeln("        ✨ 创建藏品 ID:{$newId}，价格:{$avgFreeze}，编号:{$newAssetCode}");
+                                $output->writeln("        ✨ 创建藏品 ID:{$newId}，价格:{$supplyPrice}，编号:{$newAssetCode}");
                                 $autoSupplyCount++;
                                 
                                 usleep(1000); // 防止时间戳重复
                             }
                         } else {
-                            $output->writeln("        ❌ 无法创建藏品：找不到参考商品");
+                            $output->writeln("        ❌ 无法创建藏品：找不到参考商品（场次 #{$sessionId} 下没有任何商品）");
                         }
                     }
                     
