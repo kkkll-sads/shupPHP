@@ -1375,20 +1375,24 @@ class CollectionMatching extends Command
                                     // 记录卖家收益日志
                                     Db::name('user_money_log')->insert([
                                         'user_id' => $sellerId,
+                                        'field_type' => 'balance_available',
                                         'money' => $toDispatchable,
-                                        'before' => 0, // 简化处理
+                                        'before' => 0,
                                         'after' => 0,
-                                        'type' => 'consignment_income',
-                                        'remark' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
+                                        'memo' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
+                                        'biz_type' => 'system_buy_consignment',
+                                        'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
                                     Db::name('user_money_log')->insert([
                                         'user_id' => $sellerId,
+                                        'field_type' => 'consumption_money',
                                         'money' => $toConsumption,
                                         'before' => 0,
                                         'after' => 0,
-                                        'type' => 'consignment_income_consumption',
-                                        'remark' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
+                                        'memo' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
+                                        'biz_type' => 'system_buy_consignment',
+                                        'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
                                 }
@@ -1417,10 +1421,10 @@ class CollectionMatching extends Command
                                     'user_id' => $sellerId,
                                     'related_user_id' => 0,
                                     'action_type' => 'consignment_system_buy',
-                                    'change_field' => 'consignment_status',
-                                    'change_value' => '2',
-                                    'before_value' => '1',
-                                    'after_value' => '2',
+                                    'change_field' => 'balance_available',
+                                    'change_value' => $sellerIncome,
+                                    'before_value' => 0,
+                                    'after_value' => $sellerIncome,
                                     'remark' => "系统买入寄售藏品，寄售ID:{$consignmentId}，价格:{$price}，收益:{$sellerIncome}",
                                     'create_time' => $now,
                                     'update_time' => $now,
@@ -1493,20 +1497,24 @@ class CollectionMatching extends Command
                                     
                                     Db::name('user_money_log')->insert([
                                         'user_id' => $sellerId,
+                                        'field_type' => 'balance_available',
                                         'money' => $toDispatchable,
                                         'before' => 0,
                                         'after' => 0,
-                                        'type' => 'consignment_income',
-                                        'remark' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
+                                        'memo' => "系统买入寄售收益（可调度），寄售ID:{$consignmentId}",
+                                        'biz_type' => 'system_buy_consignment',
+                                        'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
                                     Db::name('user_money_log')->insert([
                                         'user_id' => $sellerId,
+                                        'field_type' => 'consumption_money',
                                         'money' => $toConsumption,
                                         'before' => 0,
                                         'after' => 0,
-                                        'type' => 'consignment_income_consumption',
-                                        'remark' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
+                                        'memo' => "系统买入寄售收益（消费金），寄售ID:{$consignmentId}",
+                                        'biz_type' => 'system_buy_consignment',
+                                        'biz_id' => $consignmentId,
                                         'create_time' => $now,
                                     ]);
                                 }
@@ -1535,10 +1543,10 @@ class CollectionMatching extends Command
                                     'user_id' => $sellerId,
                                     'related_user_id' => 0,
                                     'action_type' => 'consignment_system_buy',
-                                    'change_field' => 'consignment_status',
-                                    'change_value' => '2',
-                                    'before_value' => '1',
-                                    'after_value' => '2',
+                                    'change_field' => 'balance_available',
+                                    'change_value' => $sellerIncome,
+                                    'before_value' => 0,
+                                    'after_value' => $sellerIncome,
                                     'remark' => "系统买入寄售藏品（无申购），寄售ID:{$consignmentId}，价格:{$price}",
                                     'create_time' => $now,
                                     'update_time' => $now,
