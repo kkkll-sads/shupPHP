@@ -314,7 +314,15 @@ class Auth extends \ba\Auth
     public function direct(int $userId): bool
     {
         $this->model = User::find($userId);
-        if (!$this->model) return false;
+        if (!$this->model) {
+            $this->setError('Account not exist');
+            return false;
+        }
+        // 检查用户状态，禁用账户不允许登录
+        if ($this->model->status != 'enable') {
+            $this->setError('Account disabled');
+            return false;
+        }
         if (Config::get('buildadmin.user_sso')) {
             Token::clear(self::TOKEN_TYPE, $this->model->id);
             Token::clear(self::TOKEN_TYPE . '-refresh', $this->model->id);

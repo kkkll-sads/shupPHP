@@ -2170,6 +2170,14 @@ class CollectionItem extends Frontend
                     throw new \Exception('该藏品未关联交易场次，无法寄售');
                 }
                 
+                // 免费寄售也需要设置 targetZoneId
+                $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
+                $targetZoneId = (int)($zone['id'] ?? 0);
+                if ($targetZoneId <= 0) {
+                    $itemZoneId = (int)($item['zone_id'] ?? 0);
+                    $targetZoneId = $itemZoneId > 0 ? $itemZoneId : 0;
+                }
+                
                 // 执行：❌ 不扣服务费，❌ 不扣寄售券
                 // （因为这是免费重发或使用免费次数）
                 
@@ -2681,13 +2689,29 @@ class CollectionItem extends Frontend
         Apidoc\Header(name: "batoken", type: "string", require: true, desc: "用户登录Token"),
         Apidoc\Returned("stats", type: "object", desc: "统计信息"),
         Apidoc\Returned("stats.total_collections", type: "int", desc: "用户总藏品数"),
-        Apidoc\Returned("stats.available_collections", type: "int", desc: "可寄售藏品数"),
+        Apidoc\Returned("stats.with_session", type: "int", desc: "关联场次的藏品数"),
+        Apidoc\Returned("stats.can_consign_now", type: "int", desc: "当前可寄售数量"),
+        Apidoc\Returned("stats.can_consign_later", type: "int", desc: "等待场次开放可寄售数量"),
+        Apidoc\Returned("stats.no_coupon", type: "int", desc: "无寄售券/免费次数的藏品数"),
+        Apidoc\Returned("stats.total_coupons", type: "int", desc: "用户可用寄售券总数"),
         Apidoc\Returned("stats.current_time", type: "string", desc: "当前时间"),
-        Apidoc\Returned("stats.active_sessions", type: "int", desc: "活跃场次数"),
-        Apidoc\Returned("items", type: "array", desc: "可寄售藏品ID列表"),
+        Apidoc\Returned("stats.active_sessions", type: "int", desc: "当前开放的场次数"),
+        Apidoc\Returned("stats.is_in_trading_time", type: "bool", desc: "是否在交易时间内"),
+        Apidoc\Returned("items", type: "array", desc: "当前可立即寄售的藏品列表"),
         Apidoc\Returned("items[].user_collection_id", type: "int", desc: "用户藏品记录ID"),
-        Apidoc\Returned("available_now_count", type: "int", desc: "当前可寄售数量"),
-        Apidoc\Returned("returned_items_count", type: "int", desc: "返回的藏品数量"),
+        Apidoc\Returned("items[].title", type: "string", desc: "藏品名称"),
+        Apidoc\Returned("items[].price", type: "float", desc: "藏品价格"),
+        Apidoc\Returned("items[].session_id", type: "int", desc: "场次ID"),
+        Apidoc\Returned("items[].zone_id", type: "int", desc: "价格区域ID"),
+        Apidoc\Returned("items[].has_free_attempt", type: "bool", desc: "是否有免费寄售次数"),
+        Apidoc\Returned("items[].has_coupon", type: "bool", desc: "是否有可用寄售券"),
+        Apidoc\Returned("items[].can_consign", type: "bool", desc: "是否可寄售"),
+        Apidoc\Returned("items[].reason", type: "string", desc: "可寄售原因"),
+        Apidoc\Returned("items_waiting", type: "array", desc: "等待场次开放的藏品列表"),
+        Apidoc\Returned("items_no_coupon", type: "array", desc: "无寄售券的藏品列表(限50条)"),
+        Apidoc\Returned("can_consign_count", type: "int", desc: "当前可寄售数量"),
+        Apidoc\Returned("coupons", type: "array", desc: "用户可用的寄售券列表"),
+        Apidoc\Returned("note", type: "string", desc: "提示信息"),
     ]
     public function batchConsignableList(): void
     {
@@ -2696,63 +2720,164 @@ class CollectionItem extends Frontend
         }
 
         $userId = $this->auth->id;
-
         $currentTime = date('H:i');
 
-        // 检查当前时间是否在寄售时间范围内
+        // 获取所有活跃场次及其交易时间
         $activeSessions = Db::name('collection_session')
             ->where('status', 1)
-            ->field('title,start_time,end_time')
-            ->select();
+            ->field('id, title, start_time, end_time')
+            ->select()
+            ->toArray();
 
+        // 检查哪些场次当前正在交易时间内
+        $activeSessionIds = [];
         $isInTradingTime = false;
         foreach ($activeSessions as $session) {
             if ($this->isTimeInRange($currentTime, $session['start_time'], $session['end_time'])) {
                 $isInTradingTime = true;
-                break;
+                $activeSessionIds[] = $session['id'];
             }
         }
 
+        // 获取用户可用的寄售券（按场次和区域分组统计）
+        $userCoupons = Db::name('user_consignment_coupon')
+            ->where('user_id', $userId)
+            ->where('status', 0) // 未使用
+            ->where('expire_time', '>', time()) // 未过期
+            ->field('session_id, zone_id, COUNT(*) as count')
+            ->group('session_id, zone_id')
+            ->select()
+            ->toArray();
+
+        // 构建券索引（快速查找）
+        $couponIndex = [];
+        $totalCoupons = 0;
+        foreach ($userCoupons as $c) {
+            $key = $c['session_id'] . '_' . $c['zone_id'];
+            $couponIndex[$key] = $c['count'];
+            $totalCoupons += $c['count'];
+        }
+
         // 获取用户的基本统计信息
+        $totalCollections = Db::name('user_collection')->where('user_id', $userId)->count();
+
+        // 查询可寄售的藏品（关联 collection_item 获取场次信息）
+        $collections = Db::name('user_collection')
+            ->alias('uc')
+            ->leftJoin('collection_item ci', 'uc.item_id = ci.id')
+            ->where('uc.user_id', $userId)
+            ->where('uc.consignment_status', 0)  // 未寄售
+            ->where('uc.delivery_status', 0)     // 未提货
+            ->where('uc.mining_status', '<>', 1) // 非矿机状态
+            ->where('ci.session_id', '>', 0)     // 必须关联场次
+            ->field('uc.id as user_collection_id, uc.title, uc.price, uc.free_consign_attempts, 
+                     ci.id as item_id, ci.session_id, ci.zone_id, ci.package_id, ci.price_zone')
+            ->order('uc.id DESC')
+            ->limit(1000)
+            ->select()
+            ->toArray();
+
+        // 分类统计
+        $canConsignNow = [];      // 当前可寄售（在交易时间内 + 有券/免费次数）
+        $canConsignLater = [];    // 可寄售但不在交易时间
+        $noCoupon = [];           // 没有可用寄售券
+        $reasons = [];            // 不可寄售原因统计
+
+        foreach ($collections as $item) {
+            $sessionId = (int)$item['session_id'];
+            $zoneId = (int)$item['zone_id'];
+            $hasFreeAttempt = (int)$item['free_consign_attempts'] > 0;
+            
+            // 检查该场次是否在交易时间内
+            $sessionInTime = in_array($sessionId, $activeSessionIds);
+            
+            // 检查是否有可用寄售券
+            $couponKey = $sessionId . '_' . $zoneId;
+            $hasCoupon = isset($couponIndex[$couponKey]) && $couponIndex[$couponKey] > 0;
+            
+            // 构建返回数据
+            $itemData = [
+                'user_collection_id' => (int)$item['user_collection_id'],
+                'title' => $item['title'],
+                'price' => (float)$item['price'],
+                'session_id' => $sessionId,
+                'zone_id' => $zoneId,
+                'has_free_attempt' => $hasFreeAttempt,
+                'has_coupon' => $hasCoupon,
+                'can_consign' => false,
+                'reason' => ''
+            ];
+
+            if ($hasFreeAttempt) {
+                // 有免费次数，可以寄售（不需要券，但仍需检查交易时间）
+                if ($sessionInTime) {
+                    $itemData['can_consign'] = true;
+                    $itemData['reason'] = '免费寄售次数';
+                    $canConsignNow[] = $itemData;
+                } else {
+                    $itemData['reason'] = '有免费次数，但场次未开放';
+                    $canConsignLater[] = $itemData;
+                }
+            } elseif ($hasCoupon) {
+                // 有寄售券
+                if ($sessionInTime) {
+                    $itemData['can_consign'] = true;
+                    $itemData['reason'] = '有可用寄售券';
+                    $canConsignNow[] = $itemData;
+                    // 扣减券计数（用于后续判断）
+                    $couponIndex[$couponKey]--;
+                } else {
+                    $itemData['reason'] = '有寄售券，但场次未开放';
+                    $canConsignLater[] = $itemData;
+                }
+            } else {
+                // 没有券也没有免费次数
+                $itemData['reason'] = '无可用寄售券或免费次数';
+                $noCoupon[] = $itemData;
+                if (!isset($reasons['no_coupon'])) {
+                    $reasons['no_coupon'] = 0;
+                }
+                $reasons['no_coupon']++;
+            }
+        }
+
+        // 统计信息
         $stats = [
-            'total_collections' => Db::name('user_collection')->where('user_id', $userId)->count(),
-            'available_collections' => Db::name('user_collection')
-                ->where('user_id', $userId)
-                ->where('consignment_status', 0)
-                ->where('delivery_status', 0)
-                ->where('mining_status', '<>', 1)
-                ->count(),
+            'total_collections' => $totalCollections,
+            'with_session' => count($collections),
+            'can_consign_now' => count($canConsignNow),
+            'can_consign_later' => count($canConsignLater),
+            'no_coupon' => count($noCoupon),
+            'total_coupons' => $totalCoupons,
             'current_time' => $currentTime,
-            'active_sessions' => count($activeSessions),
+            'active_sessions' => count($activeSessionIds),
             'is_in_trading_time' => $isInTradingTime
         ];
 
-        // 从数据库获取真实的可用藏品ID（仅在交易时间内返回）
-        $availableCollections = [];
-        if ($isInTradingTime) {
-            $availableCollections = Db::name('user_collection')
-                ->where('user_id', $userId)
-                ->where('consignment_status', 0)  // 未寄售
-                ->where('delivery_status', 0)     // 未提货
-                ->where('mining_status', '<>', 1) // 非矿机状态
-                ->order('id DESC')
-                ->limit(1000)  // 最多返回1000个
-                ->column('id');
-        }
-
+        // 构建响应
         $responseData = [
             'stats' => $stats,
-            'items' => array_map(function($id) {
-                return ['user_collection_id' => (int)$id];
-            }, $availableCollections),
-            'available_now_count' => $stats['available_collections'],
-            'returned_items_count' => count($availableCollections)
+            'items' => $canConsignNow, // 当前可直接寄售的藏品
+            'items_waiting' => $canConsignLater, // 等待场次开放的藏品
+            'items_no_coupon' => array_slice($noCoupon, 0, 50), // 无券的藏品（限制返回数量）
+            'can_consign_count' => count($canConsignNow),
+            'coupons' => $userCoupons // 用户可用的寄售券
         ];
 
+        // 生成提示信息
         if (!$isInTradingTime) {
-            $responseData['note'] = '当前时间不在寄售场次开放时间内，无法获取可寄售藏品列表';
+            $responseData['note'] = '当前时间不在任何寄售场次开放时间内';
+            if (count($canConsignLater) > 0) {
+                $responseData['note'] .= '，有 ' . count($canConsignLater) . ' 件藏品等待场次开放后可寄售';
+            }
+        } elseif (count($canConsignNow) == 0) {
+            if (count($noCoupon) > 0) {
+                $responseData['note'] = '没有可寄售的藏品，' . count($noCoupon) . ' 件藏品缺少寄售券或免费次数';
+            } else {
+                $responseData['note'] = '没有可寄售的藏品';
+            }
         } else {
-            $responseData['note'] = '显示真实的可用藏品ID列表，可直接用于批量寄售API';
+            $responseData['note'] = '共 ' . count($canConsignNow) . ' 件藏品可立即寄售';
         }
 
         $this->success('获取成功', $responseData);
@@ -3045,6 +3170,14 @@ class CollectionItem extends Frontend
                             }
                         } else {
                             throw new \Exception('该藏品未关联交易场次，无法寄售');
+                        }
+                        
+                        // 免费寄售也需要设置 targetZoneId
+                        $zone = $this->getOrCreateZoneByPrice($consignmentPrice);
+                        $targetZoneId = (int)($zone['id'] ?? 0);
+                        if ($targetZoneId <= 0) {
+                            $itemZoneId = (int)($item['zone_id'] ?? 0);
+                            $targetZoneId = $itemZoneId > 0 ? $itemZoneId : 0;
                         }
                     }
 
