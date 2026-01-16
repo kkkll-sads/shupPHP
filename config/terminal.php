@@ -167,22 +167,22 @@ return [
         'finance'               => [
             'daily'  => [
                 'cwd'     => '',
-                'command' => 'php think finance:income:daily',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" finance:income:daily',
                 'notes'   => '执行每日返息脚本',
             ],
             'period' => [
                 'cwd'     => '',
-                'command' => 'php think finance:income:period',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" finance:income:period',
                 'notes'   => '执行周期返息脚本',
             ],
             'stage'  => [
                 'cwd'     => '',
-                'command' => 'php think finance:income:stage',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" finance:income:stage',
                 'notes'   => '执行阶段返息脚本',
             ],
             'settle' => [
                 'cwd'     => '',
-                'command' => 'php think finance:settle',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" finance:settle',
                 'notes'   => '执行到期结算脚本',
             ],
         ],
@@ -190,7 +190,7 @@ return [
         'consignment'            => [
             'expire' => [
                 'cwd'     => '',
-                'command' => 'php think consignment:expire',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" consignment:expire',
                 'notes'   => '执行寄售过期流拍脚本',
             ],
         ],
@@ -199,23 +199,23 @@ return [
             'mining' => [
                 'check'    => [
                     'cwd'     => '',
-                    'command' => 'php think collection:mining:check',
+                    'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" collection:mining:check',
                     'notes'   => '执行藏品强制锁仓检查脚本',
                 ],
                 'dividend' => [
                     'cwd'     => '',
-                    'command' => 'php think collection:mining:dividend',
+                    'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" collection:mining:dividend',
                     'notes'   => '执行矿机每日分红脚本',
                 ],
             ],
             'matching' => [
                 'cwd'     => '',
-                'command' => 'php think collection:matching',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" collection:matching',
                 'notes'   => '执行藏品撮合池自动撮合脚本',
             ],
             'daily_dividend' => [
                 'cwd'     => '',
-                'command' => 'php think collection:daily:dividend',
+                'command' => 'php -r "require \'vendor/autoload.php\'; \$app = new think\App(); \$app->console->run();" collection:daily:dividend',
                 'notes'   => '执行每日分红结算并处理次日自动上架',
             ],
         ],

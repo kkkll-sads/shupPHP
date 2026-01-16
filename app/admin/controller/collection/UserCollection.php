@@ -33,7 +33,10 @@ class UserCollection extends Backend
         $consignmentStatus = $this->request->param('consignment_status', '');
         $page = $this->request->param('page/d', 1);
         $limit = $this->request->param('limit/d', 20);
-        $keyword = $this->request->param('quick_search', '');
+        // 支持两种快速搜索参数名：quickSearch（前端默认）和 quick_search
+        $keyword = $this->request->param('quickSearch', '') ?: $this->request->param('quick_search', '');
+        // 公共搜索参数（框架通用搜索功能）
+        $search = $this->request->param('search/a', []);
 
         $query = Db::name('user_collection')
             ->alias('uc')
@@ -61,14 +64,92 @@ class UserCollection extends Backend
             $query->where('uc.consignment_status', (int)$consignmentStatus);
         }
 
-        // 关键词搜索（手机号、昵称、藏品名称）
+        // 快速搜索（手机号、昵称、藏品名称、资产编号）
         if ($keyword) {
             $query->where(function ($q) use ($keyword) {
                 $q->where('u.mobile', 'like', "%{$keyword}%")
                   ->whereOr('u.nickname', 'like', "%{$keyword}%")
                   ->whereOr('uc.title', 'like', "%{$keyword}%")
-                  ->whereOr('ci.asset_code', 'like', "%{$keyword}%");
+                  ->whereOr('ci.asset_code', 'like', "%{$keyword}%")
+                  ->whereOr('uc.id', '=', $keyword); // 支持按ID搜索
             });
+        }
+
+        // 公共搜索功能（兼容框架通用搜索）
+        if (!empty($search)) {
+            // 字段映射：前端字段名 => 数据库字段名
+            $fieldMap = [
+                'id' => 'uc.id',
+                'user_id' => 'uc.user_id',
+                'item_id' => 'uc.item_id',
+                'mobile' => 'u.mobile',
+                'nickname' => 'u.nickname',
+                'item_title' => 'uc.title',
+                'title' => 'uc.title',
+                'consignment_status' => 'uc.consignment_status',
+                'delivery_status' => 'uc.delivery_status',
+                'mining_status' => 'uc.mining_status',
+                'session_id' => 'ci.session_id',
+                'asset_code' => 'ci.asset_code',
+                'create_time' => 'uc.create_time',
+                'buy_time' => 'uc.buy_time',
+            ];
+            
+            foreach ($search as $field) {
+                if (!isset($field['field']) || !isset($field['val']) || $field['val'] === '') {
+                    continue;
+                }
+                
+                $fieldName = $fieldMap[$field['field']] ?? ('uc.' . $field['field']);
+                $operator = $field['operator'] ?? '=';
+                $value = $field['val'];
+                
+                // 处理不同的操作符
+                switch (strtoupper($operator)) {
+                    case '=':
+                    case 'EQ':
+                        $query->where($fieldName, '=', $value);
+                        break;
+                    case 'LIKE':
+                        $query->where($fieldName, 'like', '%' . $value . '%');
+                        break;
+                    case '>':
+                    case 'GT':
+                        $query->where($fieldName, '>', $value);
+                        break;
+                    case '>=':
+                    case 'EGT':
+                        $query->where($fieldName, '>=', $value);
+                        break;
+                    case '<':
+                    case 'LT':
+                        $query->where($fieldName, '<', $value);
+                        break;
+                    case '<=':
+                    case 'ELT':
+                        $query->where($fieldName, '<=', $value);
+                        break;
+                    case '<>':
+                    case 'NEQ':
+                        $query->where($fieldName, '<>', $value);
+                        break;
+                    case 'IN':
+                        $query->where($fieldName, 'in', is_array($value) ? $value : explode(',', $value));
+                        break;
+                    case 'RANGE':
+                    case 'BETWEEN':
+                        // 日期范围或数值范围
+                        $rangeArr = is_array($value) ? $value : explode(',', $value);
+                        if (count($rangeArr) == 2) {
+                            // 检查是否是时间戳格式（datetime render）
+                            if (isset($field['render']) && $field['render'] == 'datetime') {
+                                $rangeArr = array_map('strtotime', $rangeArr);
+                            }
+                            $query->where($fieldName, 'between', $rangeArr);
+                        }
+                        break;
+                }
+            }
         }
 
         // 获取总数

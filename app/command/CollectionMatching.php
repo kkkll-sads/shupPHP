@@ -232,6 +232,17 @@ class CollectionMatching extends Command
                     ->select()
                     ->toArray();
 
+                // 🆕 统计每个卖家在该场次的寄售数量（多次寄售优先）
+                $sellerConsignmentCounts = Db::name('collection_consignment')
+                    ->alias('cc')
+                    ->leftJoin('collection_item ci', 'cc.item_id = ci.id')
+                    ->where('ci.session_id', $sessionId)
+                    ->where('cc.status', 1) // 寄售中
+                    ->field('cc.user_id, COUNT(*) as consign_count')
+                    ->group('cc.user_id')
+                    ->select()
+                    ->column('consign_count', 'user_id');
+
                 $items = [];
                 foreach ($pendingItems as $pendingItem) {
                     $itemId = (int)$pendingItem['item_id'];
@@ -247,14 +258,18 @@ class CollectionMatching extends Command
                     }
 
                     // 检查是否有寄售记录（状态为寄售中）
-                    $hasActiveConsignment = Db::name('collection_consignment')
+                    $consignmentInfo = Db::name('collection_consignment')
                         ->where('item_id', $itemId)
                         ->where('status', 1) // 寄售中
-                        ->count() > 0;
+                        ->find();
+                    
+                    $hasActiveConsignment = !empty($consignmentInfo);
 
                     // 如果商品上架且有库存，或者有寄售记录，则可以撮合
                     $canMatch = false;
                     $stock = 0;
+                    $sellerId = 0;
+                    $sellerConsignCount = 0;
 
                     if ((int)$itemInfo['status'] === 1 && (int)$itemInfo['stock'] > 0) {
                         // 商城上架商品
@@ -264,6 +279,8 @@ class CollectionMatching extends Command
                         // 寄售商品，设置虚拟库存为1（因为寄售商品只有一个）
                         $canMatch = true;
                         $stock = 1;
+                        $sellerId = (int)$consignmentInfo['user_id'];
+                        $sellerConsignCount = $sellerConsignmentCounts[$sellerId] ?? 1;
                     }
 
                     if ($canMatch) {
@@ -271,7 +288,9 @@ class CollectionMatching extends Command
                             'item_id' => $itemId,
                             'stock' => $stock,
                             'pool_count' => (int)$pendingItem['pool_count'],
-                            'is_consignment' => $hasActiveConsignment
+                            'is_consignment' => $hasActiveConsignment,
+                            'seller_id' => $sellerId,
+                            'seller_consign_count' => $sellerConsignCount // 🆕 卖家寄售数量
                         ];
                     }
                 }
@@ -279,6 +298,26 @@ class CollectionMatching extends Command
                 if (empty($items)) {
                     $output->writeln("  专场【{$session['session_title']}】没有满足条件的商品（需上架且有库存），跳过处理");
                     continue;
+                }
+
+                // 🆕 对商品排序：寄售商品按卖家寄售数量降序（多次寄售优先）
+                usort($items, function($a, $b) {
+                    // 1. 寄售商品优先于商城商品
+                    if ($a['is_consignment'] != $b['is_consignment']) {
+                        return $b['is_consignment'] - $a['is_consignment'];
+                    }
+                    // 2. 寄售商品按卖家寄售数量降序（多次寄售优先）
+                    if ($a['is_consignment'] && $b['is_consignment']) {
+                        return $b['seller_consign_count'] - $a['seller_consign_count'];
+                    }
+                    // 3. 商城商品按申购人数降序
+                    return $b['pool_count'] - $a['pool_count'];
+                });
+
+                // 🆕 输出多次寄售卖家统计
+                $multiConsignSellers = array_filter($sellerConsignmentCounts, function($count) { return $count > 1; });
+                if (!empty($multiConsignSellers)) {
+                    $output->writeln("  📦 多次寄售卖家：" . count($multiConsignSellers) . " 人（商品优先撮合）");
                 }
 
                 $output->writeln("  找到 " . count($items) . " 个可处理商品");
@@ -292,11 +331,19 @@ class CollectionMatching extends Command
                         continue;
                     }
 
-                    // 查询该藏品所有待撮合的记录，按权重降序、时间升序排序
+                    // 🆕 统计该场次中每个用户的申购次数（多次申购优先）
+                    $userApplicationCounts = Db::name('collection_matching_pool')
+                        ->where('session_id', $sessionId)
+                        ->where('status', 'pending')
+                        ->field('user_id, COUNT(*) as apply_count')
+                        ->group('user_id')
+                        ->select()
+                        ->column('apply_count', 'user_id');
+
+                    // 查询该藏品所有待撮合的记录
                     $pendingRecords = Db::name('collection_matching_pool')
                         ->where('item_id', $itemId)
                         ->where('status', 'pending')
-                        ->order('weight desc, create_time asc')
                         ->select()
                         ->toArray();
 
@@ -304,20 +351,45 @@ class CollectionMatching extends Command
                         continue;
                     }
 
-                    // 决定中签策略：当所有候选权重相同时，允许配置为按时间优先或随机
+                    // 🆕 为每条记录添加用户申购次数，用于排序
+                    foreach ($pendingRecords as &$record) {
+                        $record['user_apply_count'] = $userApplicationCounts[$record['user_id']] ?? 1;
+                    }
+                    unset($record);
+
+                    // 🆕 新排序规则：申购次数降序 > 权重降序 > 时间升序
+                    usort($pendingRecords, function($a, $b) {
+                        // 1. 先按用户申购次数降序（多次申购优先）
+                        if ($a['user_apply_count'] != $b['user_apply_count']) {
+                            return $b['user_apply_count'] - $a['user_apply_count'];
+                        }
+                        // 2. 再按权重降序
+                        if ($a['weight'] != $b['weight']) {
+                            return $b['weight'] - $a['weight'];
+                        }
+                        // 3. 最后按时间升序（早申购优先）
+                        return $a['create_time'] - $b['create_time'];
+                    });
+
+                    // 决定中签策略
                     $needCount = min($stock, $poolCount);
-                    $weights = array_column($pendingRecords, 'weight');
-                    $distinctWeights = array_unique($weights);
-                    if (count($distinctWeights) === 1) {
-                        // 全部权重相同，读取配置决定平局处理方式
+                    
+                    // 🆕 检查是否所有候选的申购次数和权重都相同
+                    $applyCountsForCheck = array_column($pendingRecords, 'user_apply_count');
+                    $weightsForCheck = array_column($pendingRecords, 'weight');
+                    $distinctApplyCounts = array_unique($applyCountsForCheck);
+                    $distinctWeights = array_unique($weightsForCheck);
+                    
+                    if (count($distinctApplyCounts) === 1 && count($distinctWeights) === 1) {
+                        // 全部申购次数和权重相同，读取配置决定平局处理方式
                         $tieMode = (string)(get_sys_config('matching_tie_breaker', 'time') ?? 'time'); // 'time' 或 'random'
                         if ($tieMode === 'time') {
-                            // 已按 weight desc, create_time asc 查询，这里直接取前 N 条（时间早的优先）
+                            // 已排序，直接取前 N 条（时间早的优先）
                             $selectedSlice = array_slice($pendingRecords, 0, $needCount);
                             $selectedIds = array_column($selectedSlice, 'id');
                         } else {
                             // 随机选择
-                            $rand = array_rand($pendingRecords, $needCount);
+                            $rand = array_rand($pendingRecords, min($needCount, count($pendingRecords)));
                             if (is_array($rand)) {
                                 $selectedIds = array_map(function($idx) use ($pendingRecords) {
                                     return $pendingRecords[$idx]['id'];
@@ -327,10 +399,18 @@ class CollectionMatching extends Command
                             }
                         }
                     } else {
-                        // 存在不同权重，使用轮盘赌按权重概率抽取
-                        $selectedIds = $this->rouletteWheel($pendingRecords, $needCount);
+                        // 🆕 存在不同申购次数或权重，按排序顺序优先选择（多次申购用户优先）
+                        // 直接取前 N 条（已按 申购次数降序 > 权重降序 > 时间升序 排序）
+                        $selectedSlice = array_slice($pendingRecords, 0, $needCount);
+                        $selectedIds = array_column($selectedSlice, 'id');
                     }
                     $selectedIdsMap = array_flip($selectedIds);
+                    
+                    // 🆕 输出多次申购用户统计
+                    $multiApplyUsers = array_filter($userApplicationCounts, function($count) { return $count > 1; });
+                    if (!empty($multiApplyUsers)) {
+                        $output->writeln("    📊 多次申购用户：" . count($multiApplyUsers) . " 人（优先撮合）");
+                    }
 
                     $itemType = isset($item['is_consignment']) && $item['is_consignment'] ? '寄售商品' : '商城商品';
                     $output->writeln("  {$itemType} ID {$itemId}：总记录数 {$poolCount}，库存 {$stock}，中签数 " . count($selectedIds));
@@ -1078,13 +1158,270 @@ class CollectionMatching extends Command
                     $output->writeln("  📦 分区库存【{$zName}】：商品数 {$stat['count']}，库存 {$stat['total_stock']}，价格范围 {$stat['min_p']}-{$stat['max_p']}");
                 }
 
+                // ========== 🆕 自动平衡：确保100%成功率 ==========
+                $output->writeln("  🔄 开始自动平衡检查（确保100%成功率）...");
+                
+                // 按资产包统计申购数量
+                $applyByPackage = Db::name('trade_reservations')
+                    ->where('session_id', $sessionId)
+                    ->where('status', 0)
+                    ->field('package_id, zone_id, COUNT(*) as apply_count, SUM(freeze_amount) as total_freeze')
+                    ->group('package_id, zone_id')
+                    ->select()
+                    ->toArray();
+                
+                // 按资产包统计寄售数量
+                $consignByPackage = Db::name('collection_consignment')
+                    ->alias('c')
+                    ->join('collection_item ci', 'c.item_id = ci.id')
+                    ->where('c.status', 1)
+                    ->where('ci.session_id', $sessionId)
+                    ->field('c.package_id, ci.zone_id, COUNT(*) as consign_count')
+                    ->group('c.package_id, ci.zone_id')
+                    ->select()
+                    ->toArray();
+                
+                // 转换为关联数组方便查找
+                $consignMap = [];
+                foreach ($consignByPackage as $c) {
+                    $key = $c['package_id'] . '_' . $c['zone_id'];
+                    $consignMap[$key] = (int)$c['consign_count'];
+                }
+                
+                $autoSupplyCount = 0;
+                $autoRecycleCount = 0;
+                
+                foreach ($applyByPackage as $apply) {
+                    $packageId = (int)$apply['package_id'];
+                    $zoneId = (int)$apply['zone_id'];
+                    $applyCount = (int)$apply['apply_count'];
+                    $key = $packageId . '_' . $zoneId;
+                    $consignCount = $consignMap[$key] ?? 0;
+                    
+                    $packageName = Db::name('asset_package')->where('id', $packageId)->value('name') ?: "包#{$packageId}";
+                    $zoneName = Db::name('price_zone_config')->where('id', $zoneId)->value('name') ?: "区#{$zoneId}";
+                    
+                    if ($applyCount > $consignCount) {
+                        // 申购 > 寄售：需要自动补充
+                        $needSupply = $applyCount - $consignCount;
+                        $output->writeln("    📥 【{$packageName}】【{$zoneName}】申购{$applyCount} > 寄售{$consignCount}，需补充 {$needSupply} 件");
+                        
+                        // 从系统库存补充（stock > 0 的商品）
+                        $systemItems = Db::name('collection_item')
+                            ->where('session_id', $sessionId)
+                            ->where('package_id', $packageId)
+                            ->where('zone_id', $zoneId)
+                            ->where('status', 1)
+                            ->where('stock', '>', 0)
+                            ->select()
+                            ->toArray();
+                        
+                        $suppliedCount = 0;
+                        foreach ($systemItems as $item) {
+                            if ($suppliedCount >= $needSupply) break;
+                            $canSupply = min((int)$item['stock'], $needSupply - $suppliedCount);
+                            $suppliedCount += $canSupply;
+                        }
+                        
+                        if ($suppliedCount >= $needSupply) {
+                            $output->writeln("      ✅ 系统库存充足，可补充 {$suppliedCount} 件");
+                            $autoSupplyCount += $suppliedCount;
+                        } else {
+                            $output->writeln("      ⚠️ 系统库存不足，只能补充 {$suppliedCount}/{$needSupply} 件");
+                            $autoSupplyCount += $suppliedCount;
+                        }
+                        
+                    } elseif ($consignCount > $applyCount) {
+                        // 寄售 > 申购：自动回收多余寄售
+                        $needRecycle = $consignCount - $applyCount;
+                        $output->writeln("    📤 【{$packageName}】【{$zoneName}】寄售{$consignCount} > 申购{$applyCount}，需回收 {$needRecycle} 件");
+                        
+                        // 按时间倒序获取多余的寄售商品（最晚寄售的优先回收）
+                        $excessConsignments = Db::name('collection_consignment')
+                            ->alias('c')
+                            ->join('collection_item ci', 'c.item_id = ci.id')
+                            ->where('c.status', 1)
+                            ->where('c.package_id', $packageId)
+                            ->where('ci.zone_id', $zoneId)
+                            ->where('ci.session_id', $sessionId)
+                            ->order('c.create_time desc')
+                            ->limit($needRecycle)
+                            ->field('c.*')
+                            ->select()
+                            ->toArray();
+                        
+                        foreach ($excessConsignments as $excess) {
+                            // 系统回收：将寄售状态改为"已回收"，退还本金给卖家
+                            Db::startTrans();
+                            try {
+                                $consignmentId = (int)$excess['id'];
+                                $sellerId = (int)$excess['user_id'];
+                                $price = (float)$excess['price'];
+                                $userCollectionId = (int)($excess['user_collection_id'] ?? 0);
+                                
+                                // 更新寄售状态为已回收（status=5）
+                                Db::name('collection_consignment')
+                                    ->where('id', $consignmentId)
+                                    ->update([
+                                        'status' => 5, // 已回收
+                                        'update_time' => $now,
+                                        'remark' => '系统自动回收（申购不足）',
+                                    ]);
+                                
+                                // 恢复用户藏品持有状态
+                                if ($userCollectionId > 0) {
+                                    Db::name('user_collection')
+                                        ->where('id', $userCollectionId)
+                                        ->update([
+                                            'status' => 1, // 恢复为正常持有
+                                            'update_time' => $now,
+                                        ]);
+                                }
+                                
+                                // 记录回收日志
+                                Db::name('user_activity_log')->insert([
+                                    'user_id' => $sellerId,
+                                    'related_user_id' => 0,
+                                    'action_type' => 'consignment_recycled',
+                                    'change_field' => 'consignment_status',
+                                    'change_value' => '5',
+                                    'before_value' => '1',
+                                    'after_value' => '5',
+                                    'remark' => "系统自动回收寄售（申购不足），寄售ID: {$consignmentId}",
+                                    'create_time' => $now,
+                                    'update_time' => $now,
+                                ]);
+                                
+                                Db::commit();
+                                $autoRecycleCount++;
+                                $output->writeln("      ✅ 已回收寄售ID {$consignmentId}（卖家ID {$sellerId}）");
+                                
+                            } catch (\Throwable $e) {
+                                Db::rollback();
+                                $output->writeln("      ❌ 回收失败：" . $e->getMessage());
+                            }
+                        }
+                    } else {
+                        $output->writeln("    ✅ 【{$packageName}】【{$zoneName}】供需平衡：申购{$applyCount} = 寄售{$consignCount}");
+                    }
+                    
+                    // 从map中移除已处理的
+                    unset($consignMap[$key]);
+                }
+                
+                // 处理只有寄售没有申购的情况
+                foreach ($consignMap as $key => $consignCount) {
+                    if ($consignCount > 0) {
+                        list($packageId, $zoneId) = explode('_', $key);
+                        $packageName = Db::name('asset_package')->where('id', $packageId)->value('name') ?: "包#{$packageId}";
+                        $zoneName = Db::name('price_zone_config')->where('id', $zoneId)->value('name') ?: "区#{$zoneId}";
+                        $output->writeln("    📤 【{$packageName}】【{$zoneName}】只有寄售{$consignCount}无申购，需全部回收");
+                        
+                        // 回收所有寄售
+                        $allConsignments = Db::name('collection_consignment')
+                            ->alias('c')
+                            ->join('collection_item ci', 'c.item_id = ci.id')
+                            ->where('c.status', 1)
+                            ->where('c.package_id', $packageId)
+                            ->where('ci.zone_id', $zoneId)
+                            ->where('ci.session_id', $sessionId)
+                            ->field('c.*')
+                            ->select()
+                            ->toArray();
+                        
+                        foreach ($allConsignments as $excess) {
+                            Db::startTrans();
+                            try {
+                                $consignmentId = (int)$excess['id'];
+                                $sellerId = (int)$excess['user_id'];
+                                $userCollectionId = (int)($excess['user_collection_id'] ?? 0);
+                                
+                                Db::name('collection_consignment')
+                                    ->where('id', $consignmentId)
+                                    ->update([
+                                        'status' => 5,
+                                        'update_time' => $now,
+                                        'remark' => '系统自动回收（无申购）',
+                                    ]);
+                                
+                                if ($userCollectionId > 0) {
+                                    Db::name('user_collection')
+                                        ->where('id', $userCollectionId)
+                                        ->update([
+                                            'status' => 1,
+                                            'update_time' => $now,
+                                        ]);
+                                }
+                                
+                                Db::name('user_activity_log')->insert([
+                                    'user_id' => $sellerId,
+                                    'related_user_id' => 0,
+                                    'action_type' => 'consignment_recycled',
+                                    'change_field' => 'consignment_status',
+                                    'change_value' => '5',
+                                    'before_value' => '1',
+                                    'after_value' => '5',
+                                    'remark' => "系统自动回收寄售（无申购），寄售ID: {$consignmentId}",
+                                    'create_time' => $now,
+                                    'update_time' => $now,
+                                ]);
+                                
+                                Db::commit();
+                                $autoRecycleCount++;
+                                $output->writeln("      ✅ 已回收寄售ID {$consignmentId}（卖家ID {$sellerId}）");
+                                
+                            } catch (\Throwable $e) {
+                                Db::rollback();
+                                $output->writeln("      ❌ 回收失败：" . $e->getMessage());
+                            }
+                        }
+                    }
+                }
+                
+                $output->writeln("  🔄 自动平衡完成：补充 {$autoSupplyCount} 件，回收 {$autoRecycleCount} 件");
+                // ========== 自动平衡结束 ==========
+
                 // 2. 遍历该场次的所有有效预约（status=0:待撮合）
-                // 按权重降序、时间升序排列
+                // 🆕 统计该场次中每个用户的申购次数（多次申购优先）
+                $userBlindBoxCounts = Db::name('trade_reservations')
+                    ->where('session_id', $sessionId)
+                    ->where('status', 0)
+                    ->field('user_id, COUNT(*) as apply_count')
+                    ->group('user_id')
+                    ->select()
+                    ->column('apply_count', 'user_id');
+                
+                // 🆕 输出多次申购用户统计
+                $multiApplyBlindBoxUsers = array_filter($userBlindBoxCounts, function($count) { return $count > 1; });
+                if (!empty($multiApplyBlindBoxUsers)) {
+                    $output->writeln("  📊 多次申购用户：" . count($multiApplyBlindBoxUsers) . " 人（优先撮合）");
+                }
+                
                 $reservations = Db::name('trade_reservations')
                     ->where('session_id', $sessionId)
                     ->where('status', 0)
-                    ->order('weight desc, create_time asc')
-                    ->select();
+                    ->select()
+                    ->toArray();
+                
+                // 🆕 为每条预约添加用户申购次数，用于排序
+                foreach ($reservations as &$res) {
+                    $res['user_apply_count'] = $userBlindBoxCounts[$res['user_id']] ?? 1;
+                }
+                unset($res);
+                
+                // 🆕 新排序规则：申购次数降序 > 权重降序 > 时间升序
+                usort($reservations, function($a, $b) {
+                    // 1. 先按用户申购次数降序（多次申购优先）
+                    if ($a['user_apply_count'] != $b['user_apply_count']) {
+                        return $b['user_apply_count'] - $a['user_apply_count'];
+                    }
+                    // 2. 再按权重降序
+                    if ($a['weight'] != $b['weight']) {
+                        return $b['weight'] - $a['weight'];
+                    }
+                    // 3. 最后按时间升序（早申购优先）
+                    return $a['create_time'] - $b['create_time'];
+                });
 
                 foreach ($reservations as $reservation) {
                     $reservationId = (int)$reservation['id']; // 预约记录ID
