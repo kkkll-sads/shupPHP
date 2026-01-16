@@ -39,6 +39,67 @@ class Consignment extends Backend
             $this->select();
         }
 
+        $page = $this->request->param('page/d', 1);
+        $limit = $this->request->param('limit/d', 20);
+        $quickSearch = $this->request->param('quickSearch', '') ?: $this->request->param('quick_search', '');
+        $status = $this->request->param('status', '');
+        $packageName = $this->request->param('package_name', '');
+        
+        // 使用 JOIN 查询以支持关联表字段搜索
+        $query = Db::name('collection_consignment')
+            ->alias('cc')
+            ->leftJoin('user u', 'cc.user_id = u.id')
+            ->leftJoin('collection_item ci', 'cc.item_id = ci.id')
+            ->leftJoin('asset_package ap', 'cc.package_id = ap.id');
+        
+        // 快速搜索（支持手机号、用户名、资产包名称、ID）
+        if ($quickSearch) {
+            $query->where(function ($q) use ($quickSearch) {
+                $q->where('u.mobile', 'like', "%{$quickSearch}%")
+                  ->whereOr('u.username', 'like', "%{$quickSearch}%")
+                  ->whereOr('u.nickname', 'like', "%{$quickSearch}%")
+                  ->whereOr('cc.package_name', 'like', "%{$quickSearch}%")
+                  ->whereOr('cc.id', '=', $quickSearch);
+            });
+        }
+        
+        // 状态筛选
+        if ($status !== '') {
+            $query->where('cc.status', (int)$status);
+        }
+        
+        // 资产包筛选
+        if ($packageName) {
+            $query->where('cc.package_name', $packageName);
+        }
+        
+        // 获取总数
+        $total = (clone $query)->count();
+        
+        // 获取列表
+        $list = $query
+            ->field('cc.*, u.mobile as user_mobile, u.username, u.nickname, ci.title as item_title, ci.image as item_image, ap.name as package_name_display')
+            ->order('cc.id desc')
+            ->page($page, $limit)
+            ->select()
+            ->toArray();
+        
+        // 格式化数据
+        $statusMap = [1 => '寄售中', 2 => '已售出', 3 => '流拍', 4 => '已取消', 5 => '已回收'];
+        foreach ($list as &$item) {
+            $item['status_text'] = $statusMap[$item['status']] ?? '未知';
+            $item['package_name_display'] = $item['package_name_display'] ?: $item['package_name'];
+            $item['create_time_text'] = $item['create_time'] ? date('Y-m-d H:i:s', $item['create_time']) : '';
+        }
+        
+        $this->success('', [
+            'list' => $list,
+            'total' => $total,
+            'remark' => get_route_remark(),
+        ]);
+        return;
+
+        // 以下是原有代码，保留作为备份
         [$where, $alias, $limit, $order] = $this->queryBuilder('id desc');
 
         $res = $this->model
