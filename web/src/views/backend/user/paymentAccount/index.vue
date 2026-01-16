@@ -187,6 +187,55 @@
                 <el-button @click="screenshotDialog.visible = false">关闭</el-button>
             </template>
         </el-dialog>
+
+        <!-- 编辑对话框 -->
+        <el-dialog
+            v-model="editDialog.visible"
+            title="编辑收款账户"
+            width="600px"
+            :close-on-click-modal="false"
+        >
+            <el-form :model="editDialog.form" label-width="100px">
+                <el-form-item label="用户">
+                    <el-input :value="`${editDialog.form.username || ''} (${editDialog.form.mobile || ''})`" disabled />
+                </el-form-item>
+                <el-form-item label="账户类型" required>
+                    <el-select v-model="editDialog.form.type" style="width: 100%">
+                        <el-option label="银行卡" value="bank_card" />
+                        <el-option label="支付宝" value="alipay" />
+                        <el-option label="微信" value="wechat" />
+                        <el-option label="USDT" value="usdt" />
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="银行名称" v-if="editDialog.form.type === 'bank_card'">
+                    <el-input v-model="editDialog.form.bank_name" placeholder="请输入银行名称" />
+                </el-form-item>
+                <el-form-item label="账户名" required>
+                    <el-input v-model="editDialog.form.account_name" placeholder="请输入账户名（姓名）" />
+                </el-form-item>
+                <el-form-item label="账号/卡号" required>
+                    <el-input v-model="editDialog.form.account_number" placeholder="请输入账号或卡号" />
+                </el-form-item>
+                <el-form-item label="开户支行" v-if="editDialog.form.type === 'bank_card'">
+                    <el-input v-model="editDialog.form.bank_branch" placeholder="请输入开户支行" />
+                </el-form-item>
+                <el-form-item label="审核状态">
+                    <el-select v-model="editDialog.form.audit_status" style="width: 100%">
+                        <el-option label="待审核" :value="0" />
+                        <el-option label="已通过" :value="1" />
+                        <el-option label="已拒绝" :value="2" />
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="是否默认">
+                    <el-switch v-model="editDialog.form.is_default" :active-value="1" :inactive-value="0" />
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="editDialog.visible = false">取消</el-button>
+                <el-button type="danger" @click="handleDelete" :loading="editDialog.loading">删除账户</el-button>
+                <el-button type="primary" @click="submitEdit" :loading="editDialog.loading">保存</el-button>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
@@ -197,7 +246,7 @@ import Table from '/@/components/table/index.vue'
 import TableHeader from '/@/components/table/header/index.vue'
 import { baTableApi } from '/@/api/common'
 import { fullUrl, timeFormat } from '/@/utils/common'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import createAxios from '/@/utils/axios'
 
 defineOptions({
@@ -305,7 +354,7 @@ const baTable = new baTableClass(
             {
                 label: '操作',
                 align: 'center',
-                width: 250,
+                width: 300,
                 render: 'buttons',
                 buttons: (row: any) => {
                     const buttons: any[] = []
@@ -318,6 +367,18 @@ const baTable = new baTableClass(
                         class: 'table-row-read',
                         click: () => {
                             showDetail(row)
+                        },
+                    })
+                    // 编辑按钮
+                    buttons.push({
+                        render: 'tipButton',
+                        name: 'edit',
+                        title: '编辑',
+                        type: 'warning',
+                        icon: 'fa fa-edit',
+                        class: 'table-row-edit',
+                        click: () => {
+                            showEditDialog(row)
                         },
                     })
                     // 银行卡类型不需要审核，只对非银行卡类型且待审核的账户显示审核按钮
@@ -390,6 +451,25 @@ const screenshotDialog = reactive({
     visible: false,
     url: '',
     title: '打款截图',
+})
+
+// 编辑对话框
+const editDialog = reactive({
+    visible: false,
+    loading: false,
+    form: {
+        id: 0,
+        user_id: 0,
+        username: '',
+        mobile: '',
+        type: 'bank_card',
+        account_name: '',
+        account_number: '',
+        bank_name: '',
+        bank_branch: '',
+        audit_status: 1,
+        is_default: 0,
+    },
 })
 
 // 检查是否有银行卡
@@ -513,6 +593,96 @@ const getAuditStatusType = (status: number) => {
         2: 'danger',
     }
     return map[status] || 'info'
+}
+
+// 显示编辑对话框
+const showEditDialog = (row: any) => {
+    editDialog.form = {
+        id: row.id,
+        user_id: row.user_id,
+        username: row.username || '',
+        mobile: row.mobile || '',
+        type: row.type || 'bank_card',
+        account_name: row.account_name || '',
+        account_number: row.account_number_display || '',
+        bank_name: row.bank_name || '',
+        bank_branch: row.bank_branch || '',
+        audit_status: row.audit_status ?? 1,
+        is_default: row.is_default ?? 0,
+    }
+    editDialog.visible = true
+}
+
+// 提交编辑
+const submitEdit = async () => {
+    if (!editDialog.form.account_name.trim()) {
+        ElMessage.warning('账户名不能为空')
+        return
+    }
+    if (!editDialog.form.account_number.trim()) {
+        ElMessage.warning('账号/卡号不能为空')
+        return
+    }
+
+    editDialog.loading = true
+    try {
+        const response = await createAxios({
+            url: '/admin/user.PaymentAccount/edit',
+            method: 'post',
+            data: {
+                id: editDialog.form.id,
+                type: editDialog.form.type,
+                account_name: editDialog.form.account_name,
+                account_number: editDialog.form.account_number,
+                bank_name: editDialog.form.bank_name,
+                bank_branch: editDialog.form.bank_branch,
+                audit_status: editDialog.form.audit_status,
+                is_default: editDialog.form.is_default,
+            },
+        })
+
+        if (response.code == 1) {
+            ElMessage.success('修改成功')
+            editDialog.visible = false
+            baTable.getData()
+        } else {
+            ElMessage.error(response.msg || '修改失败')
+        }
+    } catch (error: any) {
+        ElMessage.error(error.message || '操作失败')
+    } finally {
+        editDialog.loading = false
+    }
+}
+
+// 删除账户
+const handleDelete = async () => {
+    ElMessageBox.confirm('确定要删除该收款账户吗？删除后无法恢复！', '警告', {
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+    }).then(async () => {
+        editDialog.loading = true
+        try {
+            const response = await createAxios({
+                url: '/admin/user.PaymentAccount/del',
+                method: 'post',
+                data: { id: editDialog.form.id },
+            })
+
+            if (response.code == 1) {
+                ElMessage.success('删除成功')
+                editDialog.visible = false
+                baTable.getData()
+            } else {
+                ElMessage.error(response.msg || '删除失败')
+            }
+        } catch (error: any) {
+            ElMessage.error(error.message || '操作失败')
+        } finally {
+            editDialog.loading = false
+        }
+    }).catch(() => {})
 }
 
 baTable.mount()
