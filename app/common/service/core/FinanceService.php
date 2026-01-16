@@ -271,14 +271,14 @@ class FinanceService
             
             // 更新余额
             $beforeWithdrawable = (float)$seller['withdrawable_money'];
-            $beforeServiceFee = (float)$seller['service_fee_balance'];
+            $beforeConsumption = (float)($seller['consumption_money'] ?? 0);
             
             $afterWithdrawable = round($beforeWithdrawable + $totalToWithdrawable, 2);
-            $afterServiceFee = round($beforeServiceFee + $profitToServiceFee, 2);
+            $afterConsumption = round($beforeConsumption + $profitToServiceFee, 2);
             
             Db::name('user')->where('id', $sellerId)->update([
                 'withdrawable_money' => $afterWithdrawable,
-                'service_fee_balance' => $afterServiceFee,
+                'consumption_money' => $afterConsumption,
                 'update_time' => $now,
             ]);
             
@@ -320,15 +320,15 @@ class FinanceService
             }
 
             
-            // 记录确权金收益
+            // 记录消费金收益
             if ($profitToServiceFee > 0) {
                 Db::name('user_money_log')->insert([
                     'user_id' => $sellerId,
-                    'field_type' => 'service_fee_balance',
+                    'field_type' => 'consumption_money',
                     'money' => $profitToServiceFee,
-                    'before' => $beforeServiceFee,
-                    'after' => $afterServiceFee,
-                    'memo' => '【确权收益】' . $itemTitle,
+                    'before' => $beforeConsumption,
+                    'after' => $afterConsumption,
+                    'memo' => '【消费金收益】' . $itemTitle,
                     'create_time' => $now,
                     'flow_no' => self::generateFlowNo(),
                     'batch_no' => $batchNo,
@@ -341,20 +341,20 @@ class FinanceService
             Db::name('user_activity_log')->insert([
                 'user_id' => $sellerId,
                 'action_type' => 'seller_income',
-                'change_field' => 'withdrawable_money,service_fee_balance',
+                'change_field' => 'withdrawable_money,consumption_money',
                 'change_value' => json_encode([
                     'withdrawable_money' => $totalToWithdrawable,
-                    'service_fee_balance' => $profitToServiceFee,
+                    'consumption_money' => $profitToServiceFee,
                 ], JSON_UNESCAPED_UNICODE),
                 'before_value' => json_encode([
                     'withdrawable_money' => $beforeWithdrawable,
-                    'service_fee_balance' => $beforeServiceFee,
+                    'consumption_money' => $beforeConsumption,
                 ], JSON_UNESCAPED_UNICODE),
                 'after_value' => json_encode([
                     'withdrawable_money' => $afterWithdrawable,
-                    'service_fee_balance' => $afterServiceFee,
+                    'consumption_money' => $afterConsumption,
                 ], JSON_UNESCAPED_UNICODE),
-                'remark' => sprintf('卖出:%s. 本金:%.2f. 提现收益:%.2f. 确权收益:%.2f', 
+                'remark' => sprintf('卖出:%s. 本金:%.2f. 提现收益:%.2f. 消费金收益:%.2f', 
                     $itemTitle, $originalPrice, round($feePaid + $profitToWithdrawable, 2), $profitToServiceFee),
                 'create_time' => $now,
             ]);
