@@ -117,9 +117,49 @@ class CollectionMatching extends Command
         return $selectedIds;
     }
 
+    /**
+     * 进程锁文件句柄
+     */
+    private $lockFileHandle = null;
+    
+    /**
+     * 进程锁文件路径
+     */
+    private $lockFilePath = null;
+
     protected function execute(Input $input, Output $output)
     {
         $startTime = microtime(true);
+        
+        // ========== 进程锁：防止并发执行 ==========
+        $this->lockFilePath = runtime_path() . 'lock/collection_matching.lock';
+        $lockDir = dirname($this->lockFilePath);
+        if (!is_dir($lockDir)) {
+            mkdir($lockDir, 0755, true);
+        }
+        
+        $this->lockFileHandle = fopen($this->lockFilePath, 'w');
+        if (!$this->lockFileHandle) {
+            $output->writeln('<error>[' . date('Y-m-d H:i:s') . '] 无法创建锁文件，退出</error>');
+            return 1;
+        }
+        
+        // 尝试获取独占锁（非阻塞）
+        if (!flock($this->lockFileHandle, LOCK_EX | LOCK_NB)) {
+            $output->writeln('[' . date('Y-m-d H:i:s') . '] ⚠️ 撮合脚本已在运行中，本次跳过执行');
+            fclose($this->lockFileHandle);
+            return 0;
+        }
+        
+        // 写入进程信息
+        ftruncate($this->lockFileHandle, 0);
+        fwrite($this->lockFileHandle, json_encode([
+            'pid' => getmypid(),
+            'start_time' => date('Y-m-d H:i:s'),
+            'timestamp' => time(),
+        ]));
+        fflush($this->lockFileHandle);
+        // ========== 进程锁结束 ==========
         
         // 检测运行模式
         $isForceMode = (bool)$input->getOption('force') || getenv('FORCE_MATCHING') === '1';
@@ -1995,7 +2035,16 @@ class CollectionMatching extends Command
             $output->writeln("错误文件: " . $e->getFile());
             $output->writeln("错误行号: " . $e->getLine());
             $output->writeln(str_repeat('!', 80));
+        } finally {
+            // ========== 释放进程锁 ==========
+            if ($this->lockFileHandle) {
+                flock($this->lockFileHandle, LOCK_UN);
+                fclose($this->lockFileHandle);
+                $this->lockFileHandle = null;
+            }
         }
+        
+        return 0;
     }
 
     /**
