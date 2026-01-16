@@ -30,7 +30,8 @@
         "ext-iconv": "*",
         "ext-json": "*",
         "ext-gd": "*",
-        "hg/apidoc": "^5.2"
+        "hg/apidoc": "^5.2",
+        "phpoffice/phpspreadsheet": "^5.4"
     },
     "require-dev": {
         "symfony/var-dumper": "^5.4",

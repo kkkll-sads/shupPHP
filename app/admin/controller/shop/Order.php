@@ -84,7 +84,7 @@ class Order extends Backend
         }
 
         [$where, $alias, $limit, $order] = $this->queryBuilder('id desc');
-        
+
         // 特殊处理：product_type 是虚拟字段，需要通过子查询实现
         $productTypeFilter = $this->request->get('search/a', []);
         $productTypeValue = null;

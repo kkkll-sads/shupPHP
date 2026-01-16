@@ -56,12 +56,18 @@
                             placeholder="请输入提现金额"
                         ></el-input-number>
                     </el-form-item>
-                    <el-form-item prop="status" label="当前状态">
+                    <el-form-item prop="status" label="当前状态" v-if="baTable.form.operate === 'Add'">
                         <el-radio-group v-model="baTable.form.items!.status">
                             <el-radio :label="0">待审核</el-radio>
                             <el-radio :label="1">审核通过</el-radio>
                             <el-radio :label="2">审核拒绝</el-radio>
                         </el-radio-group>
+                    </el-form-item>
+                    <el-form-item v-else label="当前状态">
+                        <span>{{ baTable.form.items!.status === 0 ? '待审核' : baTable.form.items!.status === 1 ? '审核通过' : '审核拒绝' }}</span>
+                        <div class="el-form-item__description">
+                            如需修改状态，请使用表格中的审核操作按钮
+                        </div>
                     </el-form-item>
                     <el-form-item prop="apply_reason" label="申请说明">
                         <el-input
