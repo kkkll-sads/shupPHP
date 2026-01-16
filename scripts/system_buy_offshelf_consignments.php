@@ -62,14 +62,14 @@ $serviceFeeRate = (float)(get_sys_config('consignment_service_fee_rate') ?? 0.03
 $splitRate = (float)(get_sys_config('seller_profit_split_rate') ?? 0.5);
 echo "手续费率：{$serviceFeeRate}，利润分割率：{$splitRate}\n\n";
 
-// 查询需要处理的下架寄售订单（场次2，17:04下架的）
+// 查询需要处理的下架寄售订单（场次3，21:12下架的）
 $consignments = Db::name('collection_consignment')
     ->alias('c')
     ->leftJoin('user_collection uc', 'c.user_collection_id = uc.id')
     ->leftJoin('collection_item ci', 'c.item_id = ci.id')
     ->where('c.status', 3)  // 已下架
-    ->where('c.session_id', 2)
-    ->where('c.update_time', '>=', strtotime('2026-01-16 17:04:00'))
+    ->where('c.session_id', 3)
+    ->where('c.update_time', '>=', strtotime('2026-01-16 21:00:00'))
     ->field('c.*, uc.price as buy_price, uc.is_old_asset_package, ci.title as item_title, ci.image as item_image')
     ->select()
     ->toArray();
@@ -244,7 +244,7 @@ foreach ($consignments as $index => $consignment) {
                 'score' => $toScore,
                 'before' => $beforeScore,
                 'after' => $afterScore,
-                'memo' => '【确权收益】' . $itemTitle,
+                'memo' => '【消费金收益】' . $itemTitle,
                 'create_time' => $now,
             ]);
         }
@@ -306,7 +306,7 @@ foreach ($consignments as $index => $consignment) {
             ->where('user_id', $sellerId)
             ->where('action_type', 'consignment_offshelf')
             ->where('remark', 'like', "%寄售ID#{$consignmentId}%")
-            ->where('create_time', '>=', strtotime('2026-01-16 17:04:00'))
+            ->where('create_time', '>=', strtotime('2026-01-16 21:00:00'))
             ->delete();
         
         // 11. 分配代理佣金（如果有利润）

@@ -298,10 +298,6 @@ class FinanceService
             ]);
             
             // 记录收益日志 (包含 手续费返还 + 利润分红)
-            // 分开记录以便清晰：先记录手续费返还，再记录交易收益
-            
-            // 2. 交易收益 (含手续费覆盖 + 可提现利润)
-            // 合并显示，避免用户质疑"退还手续费"
             $totalIncome = $feePaid + $profitToWithdrawable;
             if ($totalIncome > 0) {
                 Db::name('user_money_log')->insert([
@@ -318,7 +314,6 @@ class FinanceService
                     'biz_id' => $bizId,
                 ]);
             }
-
             
             // 记录消费金收益
             if ($profitToScore > 0) {
