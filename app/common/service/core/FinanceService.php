@@ -204,7 +204,7 @@ class FinanceService
      * 规则：
      * 1. 本金全额退回到提现余额
      * 2. 服务费返还
-     * 3. 剩余利润对半分配：提现余额 + 确权金
+     * 3. 剩余利润对半分配：提现余额 + 消费金
      * 
      * @param int $sellerId 卖家用户ID
      * @param float $sellPrice 卖出价格
@@ -263,7 +263,7 @@ class FinanceService
             }
             
             $profitToWithdrawable = round($netProfit * $splitRate, 2);
-            $profitToServiceFee = round($netProfit * (1 - $splitRate), 2);
+            $profitToScore = round($netProfit * (1 - $splitRate), 2);
             
             // 4. 卖家提现余额增加 = 本金 + 手续费返还(全额，旧资产包为0) + 利润分红
             // 注意：这里返还的是 feePaid (用户实际支付的费用)，而不是基于本金计算的费用
@@ -271,14 +271,14 @@ class FinanceService
             
             // 更新余额
             $beforeWithdrawable = (float)$seller['withdrawable_money'];
-            $beforeConsumption = (float)($seller['consumption_money'] ?? 0);
+            $beforeScore = (float)$seller['score'];
             
             $afterWithdrawable = round($beforeWithdrawable + $totalToWithdrawable, 2);
-            $afterConsumption = round($beforeConsumption + $profitToServiceFee, 2);
+            $afterScore = round($beforeScore + $profitToScore, 2);
             
             Db::name('user')->where('id', $sellerId)->update([
                 'withdrawable_money' => $afterWithdrawable,
-                'consumption_money' => $afterConsumption,
+                'score' => $afterScore,
                 'update_time' => $now,
             ]);
             
@@ -321,13 +321,12 @@ class FinanceService
 
             
             // 记录消费金收益
-            if ($profitToServiceFee > 0) {
-                Db::name('user_money_log')->insert([
+            if ($profitToScore > 0) {
+                Db::name('user_score_log')->insert([
                     'user_id' => $sellerId,
-                    'field_type' => 'consumption_money',
-                    'money' => $profitToServiceFee,
-                    'before' => $beforeConsumption,
-                    'after' => $afterConsumption,
+                    'score' => $profitToScore,
+                    'before' => $beforeScore,
+                    'after' => $afterScore,
                     'memo' => '【消费金收益】' . $itemTitle,
                     'create_time' => $now,
                     'flow_no' => self::generateFlowNo(),
@@ -341,21 +340,21 @@ class FinanceService
             Db::name('user_activity_log')->insert([
                 'user_id' => $sellerId,
                 'action_type' => 'seller_income',
-                'change_field' => 'withdrawable_money,consumption_money',
+                'change_field' => 'withdrawable_money,score',
                 'change_value' => json_encode([
                     'withdrawable_money' => $totalToWithdrawable,
-                    'consumption_money' => $profitToServiceFee,
+                    'score' => $profitToScore,
                 ], JSON_UNESCAPED_UNICODE),
                 'before_value' => json_encode([
                     'withdrawable_money' => $beforeWithdrawable,
-                    'consumption_money' => $beforeConsumption,
+                    'score' => $beforeScore,
                 ], JSON_UNESCAPED_UNICODE),
                 'after_value' => json_encode([
                     'withdrawable_money' => $afterWithdrawable,
-                    'consumption_money' => $afterConsumption,
+                    'score' => $afterScore,
                 ], JSON_UNESCAPED_UNICODE),
                 'remark' => sprintf('卖出:%s. 本金:%.2f. 提现收益:%.2f. 消费金收益:%.2f', 
-                    $itemTitle, $originalPrice, round($feePaid + $profitToWithdrawable, 2), $profitToServiceFee),
+                    $itemTitle, $originalPrice, round($feePaid + $profitToWithdrawable, 2), $profitToScore),
                 'create_time' => $now,
             ]);
             
@@ -385,7 +384,7 @@ class FinanceService
                                 'payout_principal_withdrawable' => $originalPrice,
                                 'payout_principal_consume' => 0.00,
                                 'payout_profit_withdrawable' => $profitToWithdrawable,
-                                'payout_profit_consume' => $profitToServiceFee,
+                            'payout_profit_consume' => $profitToScore,
                             ]
                         );
                     }
@@ -403,7 +402,7 @@ class FinanceService
                 'sell_price' => $sellPrice,
                 'net_profit' => $netProfit,
                 'to_withdrawable' => $totalToWithdrawable,
-                'to_service_fee' => $profitToServiceFee,
+                'to_score' => $profitToScore,
             ]);
             
             return [

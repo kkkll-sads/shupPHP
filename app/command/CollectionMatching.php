@@ -783,7 +783,7 @@ class CollectionMatching extends Command
                                         
                                         // 🆕 新收益分配规则：
                                         // 1. 本金*3%的服务费金额直接到账提现余额（旧资产包不返还）
-                                        // 2. 剩余利润（约2%）对半到账提现余额和确权金（service_fee_balance）
+                                        // 2. 剩余利润（约2%）对半到账提现余额和消费金（score）
                                         
                                         $serviceFeeRate = (float)(get_sys_config('consignment_service_fee_rate') ?? 0.03);
                                         // 旧资产包不返还手续费
@@ -797,21 +797,21 @@ class CollectionMatching extends Command
                                             $splitRate = 0.5;
                                         }
                                         $profitToWithdrawable = round($remainingProfit * $splitRate, 2);
-                                        $profitToServiceFeeBalance = round($remainingProfit * (1 - $splitRate), 2);
+                                        $profitToScore = round($remainingProfit * (1 - $splitRate), 2);
                                         
                                         // 卖家最终提现余额增加 = 本金 + 服务费退还 + 剩余利润的一半
                                         $totalToWithdrawable = $sellerOriginalPrice + $feeRefund + $profitToWithdrawable;
                                         
                                         // 更新卖家余额
                                         $beforeWithdrawable = (float)$seller['withdrawable_money'];
-                                        $beforeServiceFee = (float)$seller['service_fee_balance']; // 确权金
+                                        $beforeScore = (float)$seller['score']; // 消费金
                                         
                                         $afterWithdrawable = round($beforeWithdrawable + $totalToWithdrawable, 2);
-                                        $afterServiceFee = round($beforeServiceFee + $profitToServiceFeeBalance, 2);
+                                        $afterScore = round($beforeScore + $profitToScore, 2);
                                         
                                         Db::name('user')->where('id', $sellerId)->update([
                                             'withdrawable_money' => $afterWithdrawable,
-                                            'service_fee_balance' => $afterServiceFee,
+                                            'score' => $afterScore,
                                             'update_time' => $now,
                                         ]);
                                         
@@ -868,19 +868,18 @@ class CollectionMatching extends Command
                                             ]);
                                         }
                                         
-                                        // 如果有确权金收益，也记录日志
-                                        if ($profitToServiceFeeBalance > 0) {
-                                            Db::name('user_money_log')->insert([
+                                        // 如果有消费金收益，也记录日志
+                                        if ($profitToScore > 0) {
+                                            Db::name('user_score_log')->insert([
                                                 'user_id' => $sellerId,
                                                 'flow_no' => $flowNo3,
                                                 'batch_no' => $batchNo,
                                                 'biz_type' => 'matching_seller_income',
                                                 'biz_id' => $consignmentId,
-                                                'field_type' => 'service_fee_balance',
-                                                'money' => $profitToServiceFeeBalance,
-                                                'before' => $beforeServiceFee,
-                                                'after' => $afterServiceFee,
-                                                'memo' => '【确权收益】' . $itemInfo['title'],
+                                                'score' => $profitToScore,
+                                                'before' => $beforeScore,
+                                                'after' => $afterScore,
+                                                'memo' => '【消费金收益】' . $itemInfo['title'],
                                                 'create_time' => $now,
                                             ]);
                                         }
@@ -889,21 +888,21 @@ class CollectionMatching extends Command
                                         Db::name('user_activity_log')->insert([
                                             'user_id' => $sellerId,
                                             'action_type' => 'matching_seller_income',
-                                            'change_field' => 'withdrawable_money,service_fee_balance',
+                                            'change_field' => 'withdrawable_money,score',
                                             'change_value' => json_encode([
                                                 'withdrawable_money' => $totalToWithdrawable,
-                                                'service_fee_balance' => $profitToServiceFeeBalance,
+                                                'score' => $profitToScore,
                                             ], JSON_UNESCAPED_UNICODE),
                                             'before_value' => json_encode([
                                                 'withdrawable_money' => $beforeWithdrawable,
-                                                'service_fee_balance' => $beforeServiceFee,
+                                                'score' => $beforeScore,
                                             ], JSON_UNESCAPED_UNICODE),
                                             'after_value' => json_encode([
                                                 'withdrawable_money' => $afterWithdrawable,
-                                                'service_fee_balance' => $afterServiceFee,
+                                                'score' => $afterScore,
                                             ], JSON_UNESCAPED_UNICODE),
-                                            'remark' => sprintf('卖出:%s. 本金:%.2f. 提现收益:%.2f. 确权收益:%.2f', 
-                                                $itemInfo['title'], $sellerOriginalPrice, $incomePart, $profitToServiceFeeBalance),
+                                            'remark' => sprintf('卖出:%s. 本金:%.2f. 提现收益:%.2f. 消费金收益:%.2f', 
+                                                $itemInfo['title'], $sellerOriginalPrice, $incomePart, $profitToScore),
                                             'extra' => json_encode([
                                                 'item_id' => $itemId,
                                                 'item_title' => $itemInfo['title'],
