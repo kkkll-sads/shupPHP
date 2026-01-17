@@ -964,7 +964,19 @@ class CollectionMatching extends Command
                                 }
 
                                 // 检查并升级用户等级，交易用户发放场次+区间绑定寄售券
+                                // 🔧 修复：如果商品zone_id为0，根据价格自动查找对应的价格区间
                                 $itemZoneId = (int)($itemInfo['zone_id'] ?? 0);
+                                if ($itemZoneId <= 0 && $itemPrice > 0) {
+                                    $matchedZone = Db::name('price_zone_config')
+                                        ->where('status', '1')
+                                        ->where('min_price', '<=', $itemPrice)
+                                        ->where('max_price', '>=', $itemPrice)
+                                        ->find();
+                                    if ($matchedZone) {
+                                        $itemZoneId = (int)$matchedZone['id'];
+                                        $output->writeln("    🔧 商品zone_id为空，根据价格{$itemPrice}自动匹配到分区#{$itemZoneId}");
+                                    }
+                                }
                                 $upgradeResult = UserService::checkAndUpgradeUserAfterPurchase($userId, $sessionId, $itemZoneId);
                                 if ($upgradeResult['upgraded']) {
                                     $upgradeMsg = $upgradeResult['new_user_type'] == 2
@@ -1966,8 +1978,24 @@ class CollectionMatching extends Command
                     ]);
                     
                     // 检查并升级用户等级，交易用户发放场次+区间绑定寄售券
-                    // 🔧 修复：使用藏品实际zone_id而非预约记录的zone_id（藏品增值后可能跨区）
-                    $actualZoneId = (int)($itemInfo['zone_id'] ?? $zoneId);
+                    // 🔧 修复：优先使用藏品实际zone_id，如果为0则使用预约记录的zone_id
+                    // 如果都为0，根据价格自动查找对应的价格区间
+                    $actualZoneId = (int)($itemInfo['zone_id'] ?? 0);
+                    if ($actualZoneId <= 0) {
+                        $actualZoneId = (int)$zoneId; // fallback到预约记录的zone_id
+                    }
+                    if ($actualZoneId <= 0 && $itemPrice > 0) {
+                        // 根据价格自动查找对应的价格区间
+                        $matchedZone = Db::name('price_zone_config')
+                            ->where('status', '1')
+                            ->where('min_price', '<=', $itemPrice)
+                            ->where('max_price', '>=', $itemPrice)
+                            ->find();
+                        if ($matchedZone) {
+                            $actualZoneId = (int)$matchedZone['id'];
+                            $output->writeln("  🔧 商品zone_id为空，根据价格{$itemPrice}自动匹配到分区#{$actualZoneId}");
+                        }
+                    }
                     $upgradeResult = UserService::checkAndUpgradeUserAfterPurchase($userId, $sessionId, $actualZoneId);
                     if ($upgradeResult['upgraded']) {
                         $upgradeMsg = $upgradeResult['new_user_type'] == 2 
